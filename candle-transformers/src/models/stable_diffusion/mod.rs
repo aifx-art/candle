@@ -215,10 +215,16 @@ impl StableDiffusionConfig {
             latent_channels: 4,
             norm_num_groups: 32,
         };
-        let scheduler = Arc::new(ddim::DDIMSchedulerConfig {
+         let scheduler = Arc::new(ddim::DDIMSchedulerConfig {
+            prediction_type,
+            eta: 0.5,
+            ..Default::default()
+        }); 
+
+      /*   let scheduler = Arc::new(ddpm::DDPMSchedulerConfig {
             prediction_type,
             ..Default::default()
-        });
+        }); */
 
         let height = if let Some(height) = height {
             assert_eq!(height % 8, 0, "height has to be divisible by 8");
