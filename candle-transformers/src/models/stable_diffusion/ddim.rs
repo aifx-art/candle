@@ -10,7 +10,7 @@
 use super::schedulers::{
     betas_for_alpha_bar, BetaSchedule, PredictionType, Scheduler, SchedulerConfig, TimestepSpacing,
 };
-use candle::{Result, Tensor};
+use candle::{DType, Result, Tensor};
 
 /// The configuration for the DDIM scheduler.
 #[derive(Debug, Clone, Copy)]
@@ -128,6 +128,8 @@ impl DDIMScheduler {
 impl Scheduler for DDIMScheduler {
     /// Performs a backward step during inference.
     fn step(&self, model_output: &Tensor, timestep: usize, sample: &Tensor) -> Result<Tensor> {
+        let dtype = sample.dtype();
+
         let timestep = if timestep >= self.alphas_cumprod.len() {
             timestep - 1
         } else {
@@ -173,14 +175,15 @@ impl Scheduler for DDIMScheduler {
             (pred_epsilon * (1. - alpha_prod_t_prev - std_dev_t * std_dev_t).sqrt())?;
         let prev_sample =
             ((pred_original_sample * alpha_prod_t_prev.sqrt())? + pred_sample_direction)?;
+
         if self.config.eta > 0. {
             &prev_sample
                 + Tensor::randn(
-                    0f32,
-                    std_dev_t as f32,
+                    0., //f32,
+                    std_dev_t,// as f32,
                     prev_sample.shape(),
                     prev_sample.device(),
-                )?
+                )?.to_dtype(dtype)?
         } else {
             Ok(prev_sample)
         }

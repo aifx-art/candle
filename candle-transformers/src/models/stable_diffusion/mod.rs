@@ -217,6 +217,7 @@ impl StableDiffusionConfig {
         };
         let scheduler = Arc::new(ddim::DDIMSchedulerConfig {
             prediction_type,
+            eta: 0.5,
             ..Default::default()
         });
 
@@ -282,6 +283,14 @@ impl StableDiffusionConfig {
             latent_channels: 4,
             norm_num_groups: 32,
         };
+        /* let scheduler = Arc::new(
+            euler_ancestral_discrete::EulerAncestralDiscreteSchedulerConfig {
+                prediction_type,
+                timestep_spacing: schedulers::TimestepSpacing::Trailing,
+                ..Default::default()
+            },
+        ); */
+
         let scheduler = Arc::new(
             euler_ancestral_discrete::EulerAncestralDiscreteSchedulerConfig {
                 prediction_type,
