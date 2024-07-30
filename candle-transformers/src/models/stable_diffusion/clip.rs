@@ -315,22 +315,26 @@ impl ClipEncoderLayer {
 #[derive(Debug)]
 struct ClipEncoder {
     layers: Vec<ClipEncoderLayer>,
+    skip_layers: usize,
 }
 
 impl ClipEncoder {
-    fn new(vs: candle_nn::VarBuilder, c: &Config) -> Result<Self> {
+    fn new(vs: candle_nn::VarBuilder, c: &Config, skip_layers: usize) -> Result<Self> {
         let vs = vs.pp("layers");
         let mut layers: Vec<ClipEncoderLayer> = Vec::new();
         for index in 0..c.num_hidden_layers {
             let layer = ClipEncoderLayer::new(vs.pp(index.to_string()), c)?;
             layers.push(layer)
         }
-        Ok(ClipEncoder { layers })
+        Ok(ClipEncoder {
+            layers,
+            skip_layers,
+        })
     }
 
     fn forward(&self, xs: &Tensor, causal_attention_mask: &Tensor) -> Result<Tensor> {
         let mut xs = xs.clone();
-        for layer in self.layers.iter() {
+        for layer in self.layers.iter().skip(self.skip_layers) {
             xs = layer.forward(&xs, causal_attention_mask)?;
         }
         Ok(xs)
@@ -343,18 +347,20 @@ pub struct ClipTextTransformer {
     embeddings: ClipTextEmbeddings,
     encoder: ClipEncoder,
     final_layer_norm: candle_nn::LayerNorm,
+    skip_layers: usize,
 }
 
 impl ClipTextTransformer {
-    pub fn new(vs: candle_nn::VarBuilder, c: &Config) -> Result<Self> {
+    pub fn new(vs: candle_nn::VarBuilder, c: &Config, skip_layers: usize) -> Result<Self> {
         let vs = vs.pp("text_model");
         let embeddings = ClipTextEmbeddings::new(vs.pp("embeddings"), c)?;
-        let encoder = ClipEncoder::new(vs.pp("encoder"), c)?;
+        let encoder = ClipEncoder::new(vs.pp("encoder"), c, skip_layers)?;
         let final_layer_norm = candle_nn::layer_norm(c.embed_dim, 1e-5, vs.pp("final_layer_norm"))?;
         Ok(ClipTextTransformer {
             embeddings,
             encoder,
             final_layer_norm,
+            skip_layers,
         })
     }
 

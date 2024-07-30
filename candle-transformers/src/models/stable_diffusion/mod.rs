@@ -451,8 +451,9 @@ pub fn build_clip_transformer<P: AsRef<std::path::Path>>(
     clip_weights: P,
     device: &Device,
     dtype: DType,
+    skip_layers: usize,
 ) -> Result<clip::ClipTextTransformer> {
     let vs = unsafe { nn::VarBuilder::from_mmaped_safetensors(&[clip_weights], dtype, device)? };
-    let text_model = clip::ClipTextTransformer::new(vs, clip)?;
+    let text_model = clip::ClipTextTransformer::new(vs, clip,skip_layers )?;
     Ok(text_model)
 }

@@ -354,7 +354,7 @@ fn text_embeddings(
         sd_config.clip2.as_ref().unwrap()
     };
     let text_model =
-        stable_diffusion::build_clip_transformer(clip_config, clip_weights, device, DType::F32)?;
+        stable_diffusion::build_clip_transformer(clip_config, clip_weights, device, DType::F32,0)?;
     let text_embeddings = text_model.forward(&tokens)?;
 
     let text_embeddings = if use_guide_scale {

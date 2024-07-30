@@ -176,7 +176,7 @@ fn encode_prompt(
 
     println!("Building the clip transformer.");
     let text_model =
-        stable_diffusion::build_clip_transformer(&clip_config, clip_weights, device, DType::F32)?;
+        stable_diffusion::build_clip_transformer(&clip_config, clip_weights, device, DType::F32,0)?;
     let text_embeddings = text_model.forward_with_mask(&tokens, tokens_len - 1)?;
     match uncond_prompt {
         None => Ok(text_embeddings),
