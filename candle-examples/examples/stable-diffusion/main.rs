@@ -128,7 +128,7 @@ enum ModelFile {
 impl StableDiffusionVersion {
     fn repo(&self) -> &'static str {
         match self {
-            Self::Xl => "stabilityai/stable-diffusion-xl-base-1.0",
+            Self::Xl => "Lykon/dreamshaper-xl-v2-turbo",// "stabilityai/stable-diffusion-xl-base-1.0",
             Self::V2_1 => "stabilityai/stable-diffusion-2-1",
             Self::V1_5 => "runwayml/stable-diffusion-v1-5",
             Self::Turbo => "stabilityai/sdxl-turbo",
@@ -278,7 +278,12 @@ fn save_image(
     timestep_ids: Option<usize>,
 ) -> Result<()> {
     let images = vae.decode(&(latents / vae_scale)?)?;
+
+    let image_start_time = std::time::Instant::now();
     let images = ((images / 2.)? + 0.5)?.to_device(&Device::Cpu)?;
+    let finish_time = image_start_time.elapsed().as_secs_f32();
+    println!("Image to CPU {}s\n", finish_time);
+
     let images = (images.clamp(0f32, 1.)? * 255.)?.to_dtype(DType::U8)?;
     for batch in 0..bsize {
         let image = images.i(batch)?;
