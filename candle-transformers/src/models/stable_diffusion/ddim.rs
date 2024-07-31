@@ -208,8 +208,7 @@ impl Scheduler for DDIMScheduler {
                 std_dev_t,
                 prev_sample.shape(),
                 &cpu_device,
-            )?.to_dtype(dtype).unwrap();
-            println!("rand on cpu {}",random_tensor);
+            )?.to_dtype(dtype).unwrap();            
             let gpu_random_tensor = random_tensor.to_device(prev_sample.device())?;
             prev_sample + gpu_random_tensor
         } else {
