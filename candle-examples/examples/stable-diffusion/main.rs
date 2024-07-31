@@ -470,7 +470,7 @@ fn run(args: Args) -> Result<()> {
             stable_diffusion::StableDiffusionConfig::v2_1(sliced_attention_size, height, width)
         }
         StableDiffusionVersion::Xl => {
-            stable_diffusion::StableDiffusionConfig::sdxl(sliced_attention_size, height, width)
+            stable_diffusion::StableDiffusionConfig::sdxl(sliced_attention_size, height, width, None)
         }
         StableDiffusionVersion::Turbo => stable_diffusion::StableDiffusionConfig::sdxl_turbo(
             sliced_attention_size,
