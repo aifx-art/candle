@@ -450,6 +450,7 @@ fn run(args: Args) -> Result<()> {
             StableDiffusionVersion::Turbo => 0.,
         },
     };
+    
     let n_steps = match n_steps {
         Some(n_steps) => n_steps,
         None => match sd_version {
@@ -459,6 +460,7 @@ fn run(args: Args) -> Result<()> {
             StableDiffusionVersion::Turbo => 1,
         },
     };
+
     let dtype = if use_f16 { DType::F16 } else { DType::F32 };
     let sd_config = match sd_version {
         StableDiffusionVersion::V1_5 => {

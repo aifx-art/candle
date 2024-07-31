@@ -175,18 +175,34 @@ impl Scheduler for DDIMScheduler {
             (pred_epsilon * (1. - alpha_prod_t_prev - std_dev_t * std_dev_t).sqrt())?;
         let prev_sample =
             ((pred_original_sample * alpha_prod_t_prev.sqrt())? + pred_sample_direction)?;
+            
+        // if self.config.eta > 0. {
+        //     &prev_sample
+        //         + Tensor::randn(
+        //             0f32,
+        //             std_dev_t as f32,
+        //             prev_sample.shape(),
+        //             prev_sample.device(),
+        //         )?
+        // } else {
+        //     Ok(prev_sample)
+        // }
 
         if self.config.eta > 0. {
-            &prev_sample
-                + Tensor::randn(
-                    0., //f32,
-                    std_dev_t,// as f32,
-                    prev_sample.shape(),
-                    prev_sample.device(),
-                )?.to_dtype(dtype)?
+            let cpu_device = candle::Device::Cpu;
+            let random_tensor = Tensor::randn(
+                0f32,
+                std_dev_t as f32,
+                prev_sample.shape(),
+                &cpu_device,
+            )?;
+            let gpu_random_tensor = random_tensor.to_device(prev_sample.device())?;
+            prev_sample + gpu_random_tensor
         } else {
             Ok(prev_sample)
         }
+
+
     }
 
     ///  Ensures interchangeability with schedulers that need to scale the denoising model input
