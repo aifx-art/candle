@@ -201,7 +201,7 @@ impl Scheduler for DDIMScheduler {
         //     Ok(prev_sample)
         // }
 
-        if self.config.eta > 0. {
+        //if self.config.eta > 0. {
             let cpu_device = candle::Device::Cpu;
             let random_tensor = Tensor::randn(
                 0.,
@@ -211,9 +211,9 @@ impl Scheduler for DDIMScheduler {
             )?.to_dtype(dtype).unwrap();            
             let gpu_random_tensor = random_tensor.to_device(prev_sample.device())?;
             prev_sample + gpu_random_tensor
-        } else {
-            Ok(prev_sample)
-        }
+       // } else {
+       //     Ok(prev_sample)
+      //  }
 
     }
 
