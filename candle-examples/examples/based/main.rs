@@ -5,10 +5,9 @@ extern crate intel_mkl_src;
 extern crate accelerate_src;
 
 use anyhow::{Error as E, Result};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 
-use candle_transformers::models::gemma::{Config as Config1, Model as Model1};
-use candle_transformers::models::gemma2::{Config as Config2, Model as Model2};
+use candle_transformers::models::based::Model;
 
 use candle::{DType, Device, Tensor};
 use candle_examples::token_output_stream::TokenOutputStream;
@@ -16,70 +15,6 @@ use candle_nn::VarBuilder;
 use candle_transformers::generation::LogitsProcessor;
 use hf_hub::{api::sync::Api, Repo, RepoType};
 use tokenizers::Tokenizer;
-
-#[derive(Clone, Debug, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum Which {
-    #[value(name = "2b")]
-    Base2B,
-    #[value(name = "7b")]
-    Base7B,
-    #[value(name = "2b-it")]
-    Instruct2B,
-    #[value(name = "7b-it")]
-    Instruct7B,
-    #[value(name = "1.1-2b-it")]
-    InstructV1_1_2B,
-    #[value(name = "1.1-7b-it")]
-    InstructV1_1_7B,
-    #[value(name = "code-2b")]
-    CodeBase2B,
-    #[value(name = "code-7b")]
-    CodeBase7B,
-    #[value(name = "code-2b-it")]
-    CodeInstruct2B,
-    #[value(name = "code-7b-it")]
-    CodeInstruct7B,
-    #[value(name = "2-2b")]
-    BaseV2_2B,
-    #[value(name = "2-2b-it")]
-    InstructV2_2B,
-    #[value(name = "2-9b")]
-    BaseV2_9B,
-    #[value(name = "2-9b-it")]
-    InstructV2_9B,
-}
-
-impl Which {
-    fn is_v1(&self) -> bool {
-        match self {
-            Self::Base2B
-            | Self::Base7B
-            | Self::Instruct2B
-            | Self::Instruct7B
-            | Self::InstructV1_1_2B
-            | Self::InstructV1_1_7B
-            | Self::CodeBase2B
-            | Self::CodeBase7B
-            | Self::CodeInstruct2B
-            | Self::CodeInstruct7B => true,
-            Self::BaseV2_2B | Self::InstructV2_2B | Self::BaseV2_9B | Self::InstructV2_9B => false,
-        }
-    }
-}
-
-enum Model {
-    V1(Model1),
-    V2(Model2),
-}
-
-impl Model {
-    fn forward(&mut self, input_ids: &Tensor, pos: usize) -> candle::Result<Tensor> {
-        match self {
-            Self::V1(m) => m.forward(input_ids, pos),
-            Self::V2(m) => m.forward(input_ids, pos),
-        }
-    }
-}
 
 struct TextGeneration {
     model: Model,
@@ -131,9 +66,9 @@ impl TextGeneration {
         std::io::stdout().flush()?;
 
         let mut generated_tokens = 0usize;
-        let eos_token = match self.tokenizer.get_token("<eos>") {
+        let eos_token = match self.tokenizer.get_token("<|endoftext|>") {
             Some(token) => token,
-            None => anyhow::bail!("cannot find the <eos> token"),
+            None => anyhow::bail!("cannot find the <|endoftext|> token"),
         };
         let start_gen = std::time::Instant::now();
         for index in 0..sample_len {
@@ -178,6 +113,16 @@ impl TextGeneration {
     }
 }
 
+#[derive(Clone, Debug, Copy, PartialEq, Eq, ValueEnum)]
+enum Which {
+    #[value(name = "360m")]
+    W360m,
+    #[value(name = "1b")]
+    W1b,
+    #[value(name = "1b-50b")]
+    W1b50b,
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -211,14 +156,14 @@ struct Args {
     #[arg(long)]
     model_id: Option<String>,
 
-    #[arg(long, default_value = "main")]
+    #[arg(long, default_value = "refs/pr/1")]
     revision: String,
 
     #[arg(long)]
-    tokenizer_file: Option<String>,
+    config_file: Option<String>,
 
     #[arg(long)]
-    config_file: Option<String>,
+    tokenizer_file: Option<String>,
 
     #[arg(long)]
     weight_files: Option<String>,
@@ -231,12 +176,8 @@ struct Args {
     #[arg(long, default_value_t = 64)]
     repeat_last_n: usize,
 
-    /// The model to use.
-    #[arg(long, default_value = "2-2b")]
+    #[arg(long, default_value = "360m")]
     which: Which,
-
-    #[arg(long)]
-    use_flash_attn: bool,
 }
 
 fn main() -> Result<()> {
@@ -267,23 +208,12 @@ fn main() -> Result<()> {
 
     let start = std::time::Instant::now();
     let api = Api::new()?;
-    let model_id = match &args.model_id {
-        Some(model_id) => model_id.to_string(),
+    let model_id = match args.model_id {
+        Some(model_id) => model_id,
         None => match args.which {
-            Which::InstructV1_1_2B => "google/gemma-1.1-2b-it".to_string(),
-            Which::InstructV1_1_7B => "google/gemma-1.1-7b-it".to_string(),
-            Which::Base2B => "google/gemma-2b".to_string(),
-            Which::Base7B => "google/gemma-7b".to_string(),
-            Which::Instruct2B => "google/gemma-2b-it".to_string(),
-            Which::Instruct7B => "google/gemma-7b-it".to_string(),
-            Which::CodeBase2B => "google/codegemma-2b".to_string(),
-            Which::CodeBase7B => "google/codegemma-7b".to_string(),
-            Which::CodeInstruct2B => "google/codegemma-2b-it".to_string(),
-            Which::CodeInstruct7B => "google/codegemma-7b-it".to_string(),
-            Which::BaseV2_2B => "google/gemma-2-2b".to_string(),
-            Which::InstructV2_2B => "google/gemma-2-2b-it".to_string(),
-            Which::BaseV2_9B => "google/gemma-2-9b".to_string(),
-            Which::InstructV2_9B => "google/gemma-2-9b-it".to_string(),
+            Which::W360m => "hazyresearch/based-360m".to_string(),
+            Which::W1b => "hazyresearch/based-1b".to_string(),
+            Which::W1b50b => "hazyresearch/based-1b-50b".to_string(),
         },
     };
     let repo = api.repo(Repo::with_revision(
@@ -291,11 +221,7 @@ fn main() -> Result<()> {
         RepoType::Model,
         args.revision,
     ));
-    let tokenizer_filename = match args.tokenizer_file {
-        Some(file) => std::path::PathBuf::from(file),
-        None => repo.get("tokenizer.json")?,
-    };
-    let config_filename = match args.config_file {
+    let config_file = match args.config_file {
         Some(file) => std::path::PathBuf::from(file),
         None => repo.get("config.json")?,
     };
@@ -304,28 +230,33 @@ fn main() -> Result<()> {
             .split(',')
             .map(std::path::PathBuf::from)
             .collect::<Vec<_>>(),
-        None => candle_examples::hub_load_safetensors(&repo, "model.safetensors.index.json")?,
+        None => vec![repo.get("model.safetensors")?],
     };
+
+    let repo = api.model("openai-community/gpt2".to_string());
+    let tokenizer_file = match args.tokenizer_file {
+        Some(file) => std::path::PathBuf::from(file),
+        None => repo.get("tokenizer.json")?,
+    };
+
     println!("retrieved the files in {:?}", start.elapsed());
-    let tokenizer = Tokenizer::from_file(tokenizer_filename).map_err(E::msg)?;
+    let tokenizer = Tokenizer::from_file(tokenizer_file).map_err(E::msg)?;
 
     let start = std::time::Instant::now();
+    let config = serde_json::from_reader(std::fs::File::open(config_file)?)?;
     let device = candle_examples::device(args.cpu)?;
     let dtype = if device.is_cuda() {
         DType::BF16
     } else {
         DType::F32
     };
-    let vb = unsafe { VarBuilder::from_mmaped_safetensors(&filenames, dtype, &device)? };
-    let model = if args.which.is_v1() {
-        let config: Config1 = serde_json::from_reader(std::fs::File::open(config_filename)?)?;
-        let model = Model1::new(args.use_flash_attn, &config, vb)?;
-        Model::V1(model)
-    } else {
-        let config: Config2 = serde_json::from_reader(std::fs::File::open(config_filename)?)?;
-        let model = Model2::new(args.use_flash_attn, &config, vb)?;
-        Model::V2(model)
+
+    let mut vb = unsafe { VarBuilder::from_mmaped_safetensors(&filenames, dtype, &device)? };
+    if args.which == Which::W1b50b {
+        vb = vb.pp("model");
     };
+
+    let model = Model::new(&config, vb)?;
 
     println!("loaded the model in {:?}", start.elapsed());
 
