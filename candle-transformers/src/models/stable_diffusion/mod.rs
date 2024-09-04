@@ -368,14 +368,14 @@ impl StableDiffusionConfig {
         });
 
         let height = if let Some(height) = height {
-            assert_eq!(height % 8, 0, "height has to be divisible by 8");
+           // assert_eq!(height % 8, 0, "height has to be divisible by 8");
             height
         } else {
             1024
         };
 
         let width = if let Some(width) = width {
-            assert_eq!(width % 8, 0, "width has to be divisible by 8");
+          //  assert_eq!(width % 8, 0, "width has to be divisible by 8");
             width
         } else {
             1024
