@@ -391,6 +391,7 @@ impl StableDiffusionConfig {
             1024
         };
 
+        println!("height, width: {} {}", height, width);
         StableDiffusionConfig {
             width,
             height,
