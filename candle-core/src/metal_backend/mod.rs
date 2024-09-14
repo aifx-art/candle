@@ -412,6 +412,8 @@ impl BackendStorage for MetalStorage {
             .map_err(MetalError::from)?;
         } else {
             let kernel_name = match (self.dtype, dtype) {
+                (DType::U32, DType::F16) => "cast_u32_f16_strided",
+                (DType::U32, DType::BF16) => "cast_u32_bf16_strided",
                 (DType::U32, DType::F32) => "cast_u32_f32_strided",
                 (DType::U32, DType::U8) => "cast_u32_u8_strided",
                 (DType::U32, DType::I64) => "cast_u32_i64_strided",
@@ -1398,6 +1400,7 @@ impl BackendStorage for MetalStorage {
         .map_err(MetalError::from)?;
         Ok(acc)
     }
+
     fn matmul(
         &self,
         rhs: &Self,
@@ -1406,32 +1409,78 @@ impl BackendStorage for MetalStorage {
         rhs_l: &Layout,
     ) -> Result<Self> {
         let buffer = self.device.new_buffer(b * m * n, self.dtype, "matmul")?;
-        let name = match self.dtype {
-            DType::F32 => "sgemm",
-            DType::F16 => "hgemm",
-            DType::BF16 => "bgemm",
-            dtype => {
-                return Err(MetalError::Message(format!("matmul doesn't support {dtype:?}")).into())
-            }
-        };
-
         let command_buffer = self.device.command_buffer()?;
         command_buffer.set_label("matmul");
-        candle_metal_kernels::call_gemm(
-            &self.device.device,
-            &command_buffer,
-            &self.device.kernels,
-            name,
-            (b, m, n, k),
-            lhs_l.stride(),
-            lhs_l.start_offset() * self.dtype.size_in_bytes(),
-            &self.buffer,
-            rhs_l.stride(),
-            rhs_l.start_offset() * rhs.dtype.size_in_bytes(),
-            &rhs.buffer,
-            &buffer,
-        )
-        .map_err(MetalError::from)?;
+        if self.dtype == DType::BF16 {
+            candle_metal_kernels::call_mlx_gemm(
+                &self.device.device,
+                &command_buffer,
+                &self.device.kernels,
+                candle_metal_kernels::GemmDType::BF16,
+                (b, m, n, k),
+                lhs_l.stride(),
+                lhs_l.start_offset() * self.dtype.size_in_bytes(),
+                &self.buffer,
+                rhs_l.stride(),
+                rhs_l.start_offset() * rhs.dtype.size_in_bytes(),
+                &rhs.buffer,
+                &buffer,
+            )
+            .map_err(MetalError::from)?;
+        } else if self.device.use_mlx_mm {
+            let dtype = match self.dtype {
+                DType::F32 => candle_metal_kernels::GemmDType::F32,
+                DType::F16 => candle_metal_kernels::GemmDType::F16,
+                DType::BF16 => candle_metal_kernels::GemmDType::BF16,
+                dtype => {
+                    return Err(MetalError::Message(format!(
+                        "mlx matmul doesn't support {dtype:?}"
+                    ))
+                    .into())
+                }
+            };
+            candle_metal_kernels::call_mlx_gemm(
+                &self.device.device,
+                &command_buffer,
+                &self.device.kernels,
+                dtype,
+                (b, m, n, k),
+                lhs_l.stride(),
+                lhs_l.start_offset() * self.dtype.size_in_bytes(),
+                &self.buffer,
+                rhs_l.stride(),
+                rhs_l.start_offset() * rhs.dtype.size_in_bytes(),
+                &rhs.buffer,
+                &buffer,
+            )
+            .map_err(MetalError::from)?;
+        } else {
+            let name = match self.dtype {
+                DType::F32 => "sgemm",
+                DType::F16 => "hgemm",
+                dtype => {
+                    return Err(
+                        MetalError::Message(format!("matmul doesn't support {dtype:?}")).into(),
+                    )
+                }
+            };
+
+            candle_metal_kernels::call_gemm(
+                &self.device.device,
+                &command_buffer,
+                &self.device.kernels,
+                name,
+                (b, m, n, k),
+                lhs_l.stride(),
+                lhs_l.start_offset() * self.dtype.size_in_bytes(),
+                &self.buffer,
+                rhs_l.stride(),
+                rhs_l.start_offset() * rhs.dtype.size_in_bytes(),
+                &rhs.buffer,
+                &buffer,
+            )
+            .map_err(MetalError::from)?;
+        }
         Ok(Self::new(
             buffer,
             self.device.clone(),
@@ -1798,6 +1847,10 @@ impl BackendDevice for MetalDevice {
         let command_buffer_index = Arc::new(RwLock::new(0));
         let kernels = Arc::new(Kernels::new());
         let buffers = Arc::new(RwLock::new(HashMap::new()));
+        let use_mlx_mm = match std::env::var("CANDLE_USE_MLX_MM").as_deref() {
+            Ok("false") | Ok("False") | Ok("FALSE") | Ok("0") | Err(_) => false,
+            Ok(_) => true,
+        };
         let compute_per_buffer = match std::env::var("CANDLE_METAL_COMPUTE_PER_BUFFER") {
             Ok(val) => val.parse()?,
             _ => 50,
@@ -1817,6 +1870,7 @@ impl BackendDevice for MetalDevice {
             buffers,
             kernels,
             seed,
+            use_mlx_mm,
         })
     }
 
