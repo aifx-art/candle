@@ -5,6 +5,8 @@
 //! inference speed and quality.
 use candle::{Result, Tensor};
 
+use super::{ddim, ddpm, euler_ancestral_discrete};
+
 pub trait SchedulerConfig: std::fmt::Debug + Send + Sync {
     fn build(&self, inference_steps: usize) -> Result<Box<dyn Scheduler>>;
 }

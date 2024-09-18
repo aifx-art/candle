@@ -35,6 +35,8 @@ pub struct EulerAncestralDiscreteSchedulerConfig {
     pub train_timesteps: usize,
     /// time step spacing for the diffusion process
     pub timestep_spacing: TimestepSpacing,
+    /// The amount of noise to be added at each step.
+    pub eta: f64,
 }
 
 impl Default for EulerAncestralDiscreteSchedulerConfig {
@@ -47,6 +49,7 @@ impl Default for EulerAncestralDiscreteSchedulerConfig {
             prediction_type: PredictionType::Epsilon,
             train_timesteps: 1000,
             timestep_spacing: TimestepSpacing::Leading,
+            eta: 0.,
         }
     }
 }
@@ -185,7 +188,7 @@ impl Scheduler for EulerAncestralDiscreteScheduler {
 
         let sigma_from = &self.sigmas[step_index];
         let sigma_to = &self.sigmas[step_index + 1];
-
+        println!("sigma from {} to {}",sigma_from, sigma_to);
         // 1. compute predicted original sample (x_0) from sigma-scaled predicted noise
         let pred_original_sample = match self.config.prediction_type {
             PredictionType::Epsilon => (sample - (model_output * *sigma_from))?,
@@ -199,16 +202,42 @@ impl Scheduler for EulerAncestralDiscreteScheduler {
         let sigma_up = (sigma_to.powi(2) * (sigma_from.powi(2) - sigma_to.powi(2))
             / sigma_from.powi(2))
         .sqrt();
+        println!("sigma up {}",sigma_up);
         let sigma_down = (sigma_to.powi(2) - sigma_up.powi(2)).sqrt();
+        println!("sigma down {}",sigma_down);
 
         // 2. convert to a ODE derivative
         let derivative = ((sample - pred_original_sample)? / *sigma_from)?;
         let dt = sigma_down - *sigma_from;
         let prev_sample = (sample + derivative * dt)?;
+        
+        let stdev =  (1.0 + self.config.eta).min(1.0);
+        println!("euler-a stddev: {} - eta: {}",stdev, self.config.eta);
+        
+        let noise = prev_sample.randn_like(0.0, stdev)?;
 
-        let noise = prev_sample.randn_like(0.0, 1.0)?;
+        //let extra_noise = prev_sample.randn_like(0.0, self.config.eta.min(0.))?;
+        let mut sample = prev_sample + (noise * sigma_up); //+ extra_noise
 
-        prev_sample + noise * sigma_up
+        if self.config.eta > 0. {
+            // let alpha_prod_t_prev = sigma_from;
+            // let alpha_prod_t = sigma_to;
+            // let beta_prod_t = 1. - alpha_prod_t;
+            // let beta_prod_t_prev = 1. - alpha_prod_t_prev;
+    
+            let variance = (sigma_from - sigma_to);
+            //let variance = (beta_prod_t_prev / beta_prod_t) * (1. - alpha_prod_t / alpha_prod_t_prev);
+            println!("euler-a variance: {} ",variance);
+          
+            
+            let stddev_e = self.config.eta.max(0.) * variance;
+            println!("euler-a extra stddev: {} - eta: {}",stddev_e, self.config.eta);
+            let extra_noise = model_output.randn_like(0.0, stddev_e)?;
+            sample = sample + extra_noise;
+        }
+        sample
+
+
     }
 
     fn add_noise(&self, original: &Tensor, noise: Tensor, timestep: usize) -> Result<Tensor> {

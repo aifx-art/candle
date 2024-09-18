@@ -329,6 +329,7 @@ impl StableDiffusionConfig {
         width: Option<usize>,
         eta: Option<f64>,
         prediction_type: schedulers::PredictionType,
+        sampler: Option<String>,
     ) -> Self {
         let bc = |out_channels, use_cross_attn, attention_head_dim| unet_2d::BlockConfig {
             out_channels,
@@ -392,15 +393,86 @@ impl StableDiffusionConfig {
         };
 
         println!("height, width: {} {}", height, width);
-        StableDiffusionConfig {
-            width,
-            height,
-            clip: clip::Config::sdxl(),
-            clip2: Some(clip::Config::sdxl2()),
-            autoencoder,
-            scheduler,
-            unet,
+
+        match sampler {
+            Some(sampler) => {
+                match sampler.as_str() {
+                    "DDPM" => {
+                        let scheduler = Arc::new(ddpm::DDPMSchedulerConfig {
+                            prediction_type,
+                            eta: eta.unwrap_or(0.),
+                            ..Default::default()
+                        });
+                        StableDiffusionConfig {
+                            width,
+                            height,
+                            clip: clip::Config::sdxl(),
+                            clip2: Some(clip::Config::sdxl2()),
+                            autoencoder,
+                            scheduler,
+                            unet,
+                        }
+                    }
+                    "EULER_ANCESTRAL" => {
+                        let scheduler = Arc::new(
+                            euler_ancestral_discrete::EulerAncestralDiscreteSchedulerConfig {
+                                prediction_type,
+                                eta: eta.unwrap_or(0.),
+                                timestep_spacing: schedulers::TimestepSpacing::Trailing,
+                                ..Default::default()
+                            },
+                        );
+                        StableDiffusionConfig {
+                            width,
+                            height,
+                            clip: clip::Config::sdxl(),
+                            clip2: Some(clip::Config::sdxl2()),
+                            autoencoder,
+                            scheduler,
+                            unet,
+                        }
+                    }
+                    "DDIM" | &_ => {
+                        let scheduler = Arc::new(ddim::DDIMSchedulerConfig {
+                            prediction_type,
+                            eta: eta.unwrap_or(0.),
+                            ..Default::default()
+                        });
+                        StableDiffusionConfig {
+                            width,
+                            height,
+                            clip: clip::Config::sdxl(),
+                            clip2: Some(clip::Config::sdxl2()),
+                            autoencoder,
+                            scheduler,
+                            unet,
+                        }
+                    }
+                }
+            }
+            None => {
+                let scheduler = Arc::new(ddim::DDIMSchedulerConfig {
+                    prediction_type,
+                    eta: eta.unwrap_or(0.),
+                    ..Default::default()
+                });
+                StableDiffusionConfig {
+                    width,
+                    height,
+                    clip: clip::Config::sdxl(),
+                    clip2: Some(clip::Config::sdxl2()),
+                    autoencoder,
+                    scheduler,
+                    unet,
+                }
+            }
         }
+
+        /*    let scheduler = Arc::new(ddpm::DDPMSchedulerConfig {
+            prediction_type,
+            //eta: eta.unwrap_or(0.),
+            ..Default::default()
+        }); */
     }
 
     pub fn sdxl(
@@ -408,6 +480,7 @@ impl StableDiffusionConfig {
         height: Option<usize>,
         width: Option<usize>,
         eta: Option<f64>,
+        sampler: Option<String>,
     ) -> Self {
         Self::sdxl_aifx_(
             sliced_attention_size,
@@ -416,6 +489,7 @@ impl StableDiffusionConfig {
             eta,
             // https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/scheduler/scheduler_config.json
             schedulers::PredictionType::Epsilon,
+            sampler,
         )
     }
 

@@ -169,8 +169,9 @@ impl Scheduler for DDIMScheduler {
         };
 
         let variance = (beta_prod_t_prev / beta_prod_t) * (1. - alpha_prod_t / alpha_prod_t_prev);
+        println!("ddim variance: {}",variance);
         let std_dev_t = self.config.eta * variance.sqrt();
-
+        println!("ddim std_dev_t: {}",std_dev_t);
         let pred_sample_direction =
             (pred_epsilon * (1. - alpha_prod_t_prev - std_dev_t * std_dev_t).sqrt())?;
         let prev_sample =

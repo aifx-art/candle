@@ -1,7 +1,9 @@
-use super::schedulers::{betas_for_alpha_bar, BetaSchedule, PredictionType};
+use std::u128::MAX;
+
+use super::schedulers::{betas_for_alpha_bar, BetaSchedule, PredictionType, Scheduler, SchedulerConfig};
 use candle::{Result, Tensor};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum DDPMVarianceType {
     FixedSmall,
     FixedSmallLog,
@@ -12,11 +14,11 @@ pub enum DDPMVarianceType {
 
 impl Default for DDPMVarianceType {
     fn default() -> Self {
-        Self::FixedSmall
+        Self::Learned
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct DDPMSchedulerConfig {
     /// The value of beta at the beginning of training.
     pub beta_start: f64,
@@ -24,6 +26,9 @@ pub struct DDPMSchedulerConfig {
     pub beta_end: f64,
     /// How beta evolved during training.
     pub beta_schedule: BetaSchedule,
+    /// The amount of noise to be added at each step.
+    /// //todo use
+    pub eta: f64,
     /// Option to predicted sample between -1 and 1 for numerical stability.
     pub clip_sample: bool,
     /// Option to clip the variance used when adding noise to the denoised sample.
@@ -40,11 +45,18 @@ impl Default for DDPMSchedulerConfig {
             beta_start: 0.00085,
             beta_end: 0.012,
             beta_schedule: BetaSchedule::ScaledLinear,
+            eta: 0.,
             clip_sample: false,
             variance_type: DDPMVarianceType::FixedSmall,
             prediction_type: PredictionType::Epsilon,
             train_timesteps: 1000,
         }
+    }
+}
+
+impl SchedulerConfig for DDPMSchedulerConfig {
+    fn build(&self, inference_steps: usize) -> Result<Box<dyn Scheduler>> {
+        Ok(Box::new(DDPMScheduler::new(inference_steps, *self)?))
     }
 }
 
@@ -123,22 +135,27 @@ impl DDPMScheduler {
         }
     }
 
-    pub fn timesteps(&self) -> &[usize] {
+}
+impl Scheduler for DDPMScheduler {
+    
+
+    fn timesteps(&self) -> &[usize] {
         self.timesteps.as_slice()
     }
 
     ///  Ensures interchangeability with schedulers that need to scale the denoising model input
     /// depending on the current timestep.
-    pub fn scale_model_input(&self, sample: Tensor, _timestep: usize) -> Tensor {
-        sample
+    fn scale_model_input(&self, sample: Tensor, _timestep: usize) -> Result<Tensor> {
+        Ok(sample)
     }
 
-    pub fn step(&self, model_output: &Tensor, timestep: usize, sample: &Tensor) -> Result<Tensor> {
+    fn step(&self, model_output: &Tensor, timestep: usize, sample: &Tensor) -> Result<Tensor> {
         let prev_t = timestep as isize - self.step_ratio as isize;
 
         // https://github.com/huggingface/diffusers/blob/df2b548e893ccb8a888467c2508756680df22821/src/diffusers/schedulers/scheduling_ddpm.py#L272
         // 1. compute alphas, betas
         let alpha_prod_t = self.alphas_cumprod[timestep];
+        println!("alpha_prod_t {}", alpha_prod_t);
         let alpha_prod_t_prev = if prev_t >= 0 {
             self.alphas_cumprod[prev_t as usize]
         } else {
@@ -179,17 +196,31 @@ impl DDPMScheduler {
         // 6. Add noise
         let mut variance = model_output.zeros_like()?;
         if timestep > 0 {
-            let variance_noise = model_output.randn_like(0., 1.)?;
+            let stdev =  (1.0 + self.config.eta).min(1.0);
+            println!("ddpm stddev {}",stdev);
+            let variance_noise = model_output.randn_like(0.0, stdev)?;
             if self.config.variance_type == DDPMVarianceType::FixedSmallLog {
                 variance = (variance_noise * self.get_variance(timestep))?;
             } else {
                 variance = (variance_noise * self.get_variance(timestep).sqrt())?;
             }
         }
-        &pred_prev_sample + variance
+        
+        
+        let mut sample = &pred_prev_sample + variance;
+        if self.config.eta > 0. {
+            let sample_variance = self.get_variance(timestep);
+            println!("ddpm variance? {}",sample_variance);
+
+            let stddev_e = self.config.eta.max(0.) * sample_variance;
+            println!("ddpm extra stddev: {} - eta: {}",stddev_e, self.config.eta);
+            let extra_noise = model_output.randn_like(0.0, stddev_e)?;
+            sample = sample + extra_noise;
+        }
+        sample
     }
 
-    pub fn add_noise(
+     fn add_noise(
         &self,
         original_samples: &Tensor,
         noise: Tensor,
@@ -199,7 +230,7 @@ impl DDPMScheduler {
             + noise * (1. - self.alphas_cumprod[timestep]).sqrt()
     }
 
-    pub fn init_noise_sigma(&self) -> f64 {
+     fn init_noise_sigma(&self) -> f64 {
         self.init_noise_sigma
     }
 }
