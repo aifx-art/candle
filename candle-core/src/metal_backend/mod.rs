@@ -412,19 +412,42 @@ impl BackendStorage for MetalStorage {
             .map_err(MetalError::from)?;
         } else {
             let kernel_name = match (self.dtype, dtype) {
-                (DType::U32, DType::F16) => "cast_u32_f16_strided",
+                (DType::BF16, DType::F16) => "cast_bf16_f16_strided",
+                (DType::BF16, DType::F32) => "cast_bf16_f32_strided",
+                (DType::BF16, DType::I64) => "cast_bf16_i64_strided",
+                (DType::BF16, DType::U32) => "cast_bf16_u32_strided",
+                (DType::BF16, DType::U8) => "cast_bf16_u8_strided",
+
+                (DType::F16, DType::BF16) => "cast_f16_bf16_strided",
+                (DType::F16, DType::F32) => "cast_f16_f32_strided",
+                (DType::F16, DType::I64) => "cast_f16_i64_strided",
+                (DType::F16, DType::U32) => "cast_f16_u32_strided",
+                (DType::F16, DType::U8) => "cast_f16_u8_strided",
+
+                (DType::F32, DType::BF16) => "cast_f32_bf16_strided",
+                (DType::F32, DType::F16) => "cast_f32_f16_strided",
+                (DType::F32, DType::I64) => "cast_f32_i64_strided",
+                (DType::F32, DType::U32) => "cast_f32_u32_strided",
+                (DType::F32, DType::U8) => "cast_f32_u8_strided",
+
+                (DType::I64, DType::F32) => "cast_i64_f32_strided",
+                (DType::I64, DType::BF16) => "cast_i64_bf16_strided",
+                (DType::I64, DType::F16) => "cast_i64_f16_strided",
+                (DType::I64, DType::U32) => "cast_i64_u32_strided",
+                (DType::I64, DType::U8) => "cast_i64_u8_strided",
+
                 (DType::U32, DType::BF16) => "cast_u32_bf16_strided",
+                (DType::U32, DType::F16) => "cast_u32_f16_strided",
                 (DType::U32, DType::F32) => "cast_u32_f32_strided",
-                (DType::U32, DType::U8) => "cast_u32_u8_strided",
                 (DType::U32, DType::I64) => "cast_u32_i64_strided",
-                (DType::U8, DType::U32) => "cast_u8_u32_strided",
+                (DType::U32, DType::U8) => "cast_u32_u8_strided",
+
+                (DType::U8, DType::BF16) => "cast_u8_bf16_strided",
+                (DType::U8, DType::F16) => "cast_u8_f16_strided",
                 (DType::U8, DType::F32) => "cast_u8_f32_strided",
                 (DType::U8, DType::I64) => "cast_u8_i64_strided",
-                (DType::F32, DType::F16) => "cast_f32_f16_strided",
-                (DType::F16, DType::F32) => "cast_f16_f32_strided",
-                (DType::I64, DType::F32) => "cast_i64_f32_strided",
-                (DType::F32, DType::BF16) => "cast_f32_bf16_strided",
-                (DType::BF16, DType::F32) => "cast_bf16_f32_strided",
+                (DType::U8, DType::U32) => "cast_u8_u32_strided",
+
                 (left, right) => {
                     crate::bail!("Metal strided to_dtype {left:?} {right:?} not implemented")
                 }
@@ -1841,33 +1864,22 @@ impl BackendDevice for MetalDevice {
     fn new(ordinal: usize) -> Result<Self> {
         let device = metal::Device::all().swap_remove(ordinal);
         let command_queue = device.new_command_queue();
-        let command_buffer = command_queue.new_command_buffer().to_owned();
-        command_buffer.enqueue();
-        let command_buffer = Arc::new(RwLock::new(command_buffer));
-        let command_buffer_index = Arc::new(RwLock::new(0));
         let kernels = Arc::new(Kernels::new());
-        let buffers = Arc::new(RwLock::new(HashMap::new()));
         let use_mlx_mm = match std::env::var("CANDLE_USE_MLX_MM").as_deref() {
             Ok("false") | Ok("False") | Ok("FALSE") | Ok("0") | Err(_) => false,
             Ok(_) => true,
-        };
-        let compute_per_buffer = match std::env::var("CANDLE_METAL_COMPUTE_PER_BUFFER") {
-            Ok(val) => val.parse()?,
-            _ => 50,
         };
         let seed = Arc::new(Mutex::new(device.new_buffer_with_data(
             [299792458].as_ptr() as *const c_void,
             4,
             MTLResourceOptions::StorageModeManaged,
         )));
+        let commands = device::Commands::new(command_queue)?;
         Ok(Self {
             id: DeviceId::new(),
             device,
-            command_queue,
-            command_buffer,
-            command_buffer_index,
-            compute_per_buffer,
-            buffers,
+            commands: Arc::new(RwLock::new(commands)),
+            buffers: Arc::new(RwLock::new(HashMap::new())),
             kernels,
             seed,
             use_mlx_mm,
