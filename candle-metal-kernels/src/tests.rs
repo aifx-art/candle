@@ -1,6 +1,7 @@
 use super::*;
 use half::{bf16, f16};
 use metal::MTLResourceOptions;
+use rand::Rng;
 
 fn read_to_vec<T: Clone>(buffer: &Buffer, n: usize) -> Vec<T> {
     let ptr = buffer.contents() as *const T;
@@ -2306,4 +2307,34 @@ fn conv_transpose1d_u32() {
 
     let expected = vec![1, 4, 10, 20, 25, 24, 16];
     assert_eq!(results, expected);
+}
+
+#[test]
+fn const_fill() {
+    fn constant_fill<T: Clone>(name: &'static str, len: usize, value: f32) -> Vec<T> {
+        let dev = device();
+        let kernels = Kernels::new();
+        let command_queue = dev.new_command_queue();
+        let command_buffer = command_queue.new_command_buffer();
+        let buffer = dev.new_buffer(
+            (len * std::mem::size_of::<T>()) as u64,
+            MTLResourceOptions::StorageModePrivate,
+        );
+        call_const_fill(&dev, command_buffer, &kernels, name, len, &buffer, value).unwrap();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+        read_to_vec::<T>(&buffer, len)
+    }
+    fn test<T: Clone + PartialEq + std::fmt::Debug, F: FnOnce(f32) -> T>(name: &'static str, f: F) {
+        let len = rand::thread_rng().gen_range(2..16) * rand::thread_rng().gen_range(4..16);
+        let value = rand::thread_rng().gen_range(1. ..19.);
+        let v = constant_fill::<T>(name, len, value);
+        assert_eq!(v, vec![f(value); len])
+    }
+    test::<u8, _>("fill_u8", |v| v as u8);
+    test::<u32, _>("fill_u32", |v| v as u32);
+    test::<i64, _>("fill_i64", |v| v as i64);
+    test::<f16, _>("fill_f16", f16::from_f32);
+    test::<bf16, _>("fill_bf16", bf16::from_f32);
+    test::<f32, _>("fill_f32", |v| v);
 }
