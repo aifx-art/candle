@@ -16,7 +16,7 @@ candle-kernels = { workspace = true, optional = true }
 candle-metal-kernels = { workspace = true, optional = true }
 metal = { workspace = true, optional = true}
 cudarc = { workspace = true, optional = true }
-gemm = { workspace = true }
+#gemm = { workspace = true }
 half = { workspace = true }
 intel-mkl-src = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
@@ -30,6 +30,12 @@ safetensors = { workspace = true }
 thiserror = { workspace = true }
 yoke = { workspace = true }
 zip = { workspace = true }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+accelerate-provider = "0.2.1"
+
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+gemm = { version = "0.17.0", features = ["wasm-simd128-enable"] }
 
 [dev-dependencies]
 anyhow = { workspace = true }

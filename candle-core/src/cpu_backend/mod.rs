@@ -479,7 +479,6 @@ impl<'a, I: IntDType> Map1 for Gather<'a, I> {
             let start_src_idx = left_i * src_right_len * src_dim_len;
             let start_dst_idx = left_i * dst_right_len * dst_dim_len;
             for i in 0..dst_dim_len {
-                let start_dst_idx = start_dst_idx + i * dst_right_len;
                 for right_i in 0..dst_right_len {
                     let dst_idx = start_dst_idx + right_i;
                     let index = ids[dst_idx].as_usize();
@@ -1245,7 +1244,11 @@ impl MatMul {
 impl Map2 for MatMul {
     const OP: &'static str = "mat_mul";
 
-    #[cfg(all(not(feature = "mkl"), not(feature = "accelerate")))]
+    #[cfg(all(
+        not(feature = "mkl"),
+        not(feature = "accelerate"),
+        not(target_os = "ios")
+    ))]
     fn f<T: 'static + WithDType + num_traits::Num + Copy>(
         &self,
         lhs: &[T],
@@ -1319,7 +1322,20 @@ impl Map2 for MatMul {
         Ok(dst)
     }
 
-    #[cfg(feature = "accelerate")]
+    #[cfg(target_os = "ios")]
+    fn f<T: 'static + WithDType + num_traits::Num + Copy>(
+        &self,
+        lhs: &[T],
+        lhs_l: &Layout,
+        rhs: &[T],
+        rhs_l: &Layout,
+    ) -> Result<Vec<T>> {
+        // Check the data type of T
+        Err(Error::UnsupportedDTypeForOp(T::DTYPE, "matmul").bt())?
+    }
+
+    #[cfg(all(feature = "accelerate", not(target_os = "ios")))]
+    //#[cfg(feature = "accelerate")]
     fn f<T: 'static + WithDType + num_traits::Num + Copy>(
         &self,
         lhs: &[T],
