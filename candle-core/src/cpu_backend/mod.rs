@@ -1330,7 +1330,7 @@ impl Map2 for MatMul {
         rhs: &[T],
         rhs_l: &Layout,
     ) -> Result<Vec<T>> {
-        // Check the data type of T
+        // todo fix...this is just some random error for now since its not used but needs to be here to compile for ios
         Err(Error::UnsupportedDTypeForOp(T::DTYPE, "matmul").bt())?
     }
 
