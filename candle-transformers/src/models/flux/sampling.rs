@@ -105,6 +105,7 @@ pub fn denoise<M: super::WithForward>(
     let b_sz = img.dim(0)?;
     let dev = img.device();
     let guidance = Tensor::full(guidance as f32, b_sz, dev)?;
+    
     let mut img = img.clone();
     for window in timesteps.windows(2) {
         let (t_curr, t_prev) = match window {
@@ -112,6 +113,12 @@ pub fn denoise<M: super::WithForward>(
             _ => continue,
         };
         let t_vec = Tensor::full(*t_curr as f32, b_sz, dev)?;
+        let eta = 0.5f64;
+        let sigma_dif = *t_prev - *t_curr ;
+        let stdev = eta * sigma_dif;
+        println!("flux add noise {} sigma diff {}", stdev,sigma_dif);
+        let noise = img.randn_like(0.0, stdev)?;
+        img = (img + noise)?;
         let pred = model.forward(&img, img_ids, txt, txt_ids, &t_vec, vec_, Some(&guidance))?;
         img = (img + pred * (t_prev - t_curr))?
     }
