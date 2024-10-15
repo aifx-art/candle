@@ -136,7 +136,7 @@ pub fn denoise<M: super::WithForward>(
        
         //let sigma_dif = *t_prev - *t_curr;
         println!("flux current step {} - t_curr {} t_prev{}", current_step, t_curr,t_prev);
-        let decay_value = cos_decay(timesteps.len(), current_step);
+        let decay_value = exponential_decay(timesteps.len(), current_step);
         println!("cos decay {}",decay_value);
         current_step+=1;
         let stdev = eta * decay_value * t_curr;
