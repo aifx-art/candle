@@ -52,6 +52,9 @@ struct Args {
     /// The seed to use when generating random samples.
     #[arg(long)]
     seed: Option<u64>,
+
+    #[arg(long)]
+    eta: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, PartialEq, Eq)]
@@ -73,8 +76,11 @@ fn run(args: Args) -> Result<()> {
         decode_only,
         model,
         quantized,
+        eta,
         ..
     } = args;
+
+    let eta = eta.unwrap_or(0.0);
     let width = width.unwrap_or(1360);
     let height = height.unwrap_or(768);
 
@@ -206,6 +212,7 @@ fn run(args: Args) -> Result<()> {
                         &state.vec,
                         &timesteps,
                         4.,
+                        eta,
                     )?
                     .to_dtype(dtype)?
                 } else {
@@ -226,6 +233,7 @@ fn run(args: Args) -> Result<()> {
                         &state.vec,
                         &timesteps,
                         4.,
+                        eta,
                     )?
                 }
             };
