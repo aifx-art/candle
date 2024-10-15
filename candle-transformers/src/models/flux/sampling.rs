@@ -93,11 +93,19 @@ pub fn unpack(xs: &Tensor, height: usize, width: usize) -> Result<Tensor> {
 }
 
 fn exponential_decay(total_steps: usize, current_step: usize) -> f64 {
-    let k = 16.18; // Controls the steepness of the decay; tweak as needed.
+    let k = 10.0; // Controls the steepness of the decay
     let t = current_step as f64 / (total_steps) as f64; // Normalize current step to [0, 1]
-    let phi = 1.618033f64;
-    phi.powf(-k * t) // Exponential decay formula
-    //std::f64::consts::E.powf(-k * t) // Exponential decay formula
+    std::f64::consts::E.powf(-k * t) // Exponential decay formula
+}
+
+fn cos_decay (total_steps: usize, current_step: usize) -> f64 {
+
+ // Calculate the cosine decay
+ let t = current_step as f64;
+ let T = total_steps as f64;
+
+ // Using the cosine decay formula
+ (std::f64::consts::PI * t / (2.0 * T)).cos().powi(2)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -127,8 +135,8 @@ pub fn denoise<M: super::WithForward>(
        
         //let sigma_dif = *t_prev - *t_curr;
         println!("flux current step {} - t_curr {} t_prev{}", current_step, t_curr,t_prev);
-        let decay_value = exponential_decay(timesteps.len(), current_step);
-        println!("exp onential decay {}",decay_value);
+        let decay_value = cos_decay(timesteps.len(), current_step);
+        println!("cos decay {}",decay_value);
         current_step+=1;
         let stdev = eta * decay_value * t_curr;
         println!("flux add noise {}", stdev,);
