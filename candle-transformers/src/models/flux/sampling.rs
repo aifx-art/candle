@@ -141,7 +141,7 @@ pub fn denoise<M: super::WithForward>(
         let decay_value = exponential_decay(timesteps.len(), current_step);
         println!("flux current step {} decay {}", current_step, decay_value);
         current_step += 1;
-        let stdev = eta * decay_value * sigma_down;
+        let stdev = eta * decay_value * sigma_down.sqrt();
         println!(
             "flux current step {} flux add noise {}",
             current_step, stdev,
