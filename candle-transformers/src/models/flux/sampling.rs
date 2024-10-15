@@ -93,7 +93,7 @@ pub fn unpack(xs: &Tensor, height: usize, width: usize) -> Result<Tensor> {
 }
 
 fn exponential_decay(total_steps: usize, current_step: usize) -> f64 {
-    let k = 10.0; // Controls the steepness of the decay; tweak as needed.
+    let k = 16.18; // Controls the steepness of the decay; tweak as needed.
     let t = current_step as f64 / (total_steps) as f64; // Normalize current step to [0, 1]
     let phi = 1.618033f64;
     phi.powf(-k * t) // Exponential decay formula
