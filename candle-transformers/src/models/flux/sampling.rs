@@ -137,10 +137,10 @@ pub fn denoise<M: super::WithForward>(
         //let sigma_dif = *t_prev - *t_curr;
         println!("flux current step {} - t_curr {} t_prev{}", current_step, t_curr,t_prev);
         let decay_value = exponential_decay(timesteps.len(), current_step);
-        println!("cos decay {}",decay_value);
+        println!("flux current step {} decay {}",current_step,decay_value);
         current_step+=1;
         let stdev = eta * decay_value * t_curr;
-        println!("flux add noise {}", stdev,);
+        println!("flux current step {} flux add noise {}",current_step, stdev,);
         let noise = img.randn_like(0.0, stdev)?;
         img = (img + noise)?;
         let pred = model.forward(&img, img_ids, txt, txt_ids, &t_vec, vec_, Some(&guidance))?;        
