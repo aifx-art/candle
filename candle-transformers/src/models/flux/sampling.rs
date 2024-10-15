@@ -114,9 +114,9 @@ pub fn denoise<M: super::WithForward>(
         };
         let t_vec = Tensor::full(*t_curr as f32, b_sz, dev)?;
         let eta = 1.0f64;
-        let sigma_dif = *t_prev - *t_curr;
-        println!("t_curr {} t_prev{} diff = {}", t_curr,t_prev, sigma_dif);        
-        let stdev = eta * sigma_dif;
+        //let sigma_dif = *t_prev - *t_curr;
+        println!("t_curr {} t_prev{}", t_curr,t_prev);        
+        let stdev = eta * t_curr;
         println!("flux add noise {}", stdev,);
         let noise = img.randn_like(0.0, stdev)?;
         img = (img + noise)?;
