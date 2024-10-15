@@ -143,7 +143,7 @@ pub fn denoise<M: super::WithForward>(
         
         let sigma_down_sqrt = sigma_down.sqrt();
         println!("sigma_down_sqrt {:?}",sigma_down_sqrt);
-        let stdev = eta * (*t_curr * sigma_down_sqrt).sqrt();
+        let stdev = eta * sigma_down_sqrt * *t_curr;
         println!(
             "flux current step {} flux add noise {:?}",
             current_step, stdev,
