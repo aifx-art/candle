@@ -133,7 +133,7 @@ pub fn denoise<M: super::WithForward>(
         };
         let t_vec = Tensor::full(*t_curr as f32, b_sz, dev)?;
 
-        let sigma_down = *t_curr - *t_prev;
+        let sigma_down = t_curr.powi(2) - t_prev.powi(2);
         println!(
             "**flux current step {} - t_curr {} t_prev{}",
             current_step, t_curr, t_prev
@@ -141,14 +141,14 @@ pub fn denoise<M: super::WithForward>(
         let decay_value = exponential_decay(timesteps.len(), current_step);
         println!("flux current step {} decay {}", current_step, decay_value);
         
-        let sigma_down_sqrt = sigma_down;
+        let sigma_down_sqrt = sigma_down.sqrt();
         println!("sigma_down_sqrt {:?}",sigma_down_sqrt);
-        let stdev = eta * *t_curr;
+        let stdev = eta * *t_curr * sigma_down_sqrt;
         println!(
             "flux current step {} flux add noise {:?}",
             current_step, stdev,
         );        
-        let noise = (img.randn_like(0.0, stdev)? * sigma_down_sqrt)?;
+        let noise = img.randn_like(0.0, stdev)?;
         img = (img + noise)?;
         let pred = model.forward(&img, img_ids, txt, txt_ids, &t_vec, vec_, Some(&guidance))?;
         current_step += 1;
