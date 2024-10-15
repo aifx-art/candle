@@ -94,9 +94,9 @@ pub fn unpack(xs: &Tensor, height: usize, width: usize) -> Result<Tensor> {
 
 fn exponential_decay(total_steps: usize, current_step: usize) -> f64 {
     let k = 10.0; // Controls the steepness of the decay
-    let t = current_step as f64 / (total_steps) as f64; // Normalize current step to [0, 1]
+    let t = (current_step+1) as f64 / (total_steps) as f64; // Normalize current step to [0, 1]
     //std::f64::consts::E.powf(-k * t) // Exponential decay formula
-    (std::f64::consts::E * 2.0).powf(-k * t)
+    (std::f64::consts::E).powf(-k * t)
 }
 
 fn cos_decay(total_steps: usize, current_step: usize) -> f64 {
