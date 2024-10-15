@@ -113,7 +113,7 @@ pub fn denoise<M: super::WithForward>(
             _ => continue,
         };
         let t_vec = Tensor::full(*t_curr as f32, b_sz, dev)?;
-        let eta = 1.0f64;
+        let eta = 0.1f64;
         //let sigma_dif = *t_prev - *t_curr;
         println!("t_curr {} t_prev{}", t_curr,t_prev);        
         let stdev = eta * t_curr;
