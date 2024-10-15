@@ -121,7 +121,7 @@ pub fn denoise<M: super::WithForward>(
             _ => continue,
         };
         let t_vec = Tensor::full(*t_curr as f32, b_sz, dev)?;
-        let eta = 0.5f64;
+        let eta = 0.1f64;
         //let sigma_dif = *t_prev - *t_curr;
         println!("t_curr {} t_prev{}", t_curr,t_prev);
         let decay_value = exponential_decay(timesteps.len(), current_step);
