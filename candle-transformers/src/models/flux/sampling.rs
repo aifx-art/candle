@@ -1,4 +1,5 @@
 use candle::{Device, Result, Tensor};
+use serde::de;
 
 pub fn get_noise(
     num_samples: usize,
@@ -91,6 +92,22 @@ pub fn unpack(xs: &Tensor, height: usize, width: usize) -> Result<Tensor> {
         .reshape((b, c_ph_pw / 4, height * 2, width * 2))
 }
 
+fn exponential_decay(total_steps: usize, current_step: usize) -> f64 {
+    let k = std::f64::consts::PI * 2.0; // Controls the steepness of the decay
+    let t = (current_step) as f64 / (total_steps -1) as f64; // Normalize current step to [0, 1]
+    //std::f64::consts::E.powf(-k * t) // Exponential decay formula
+    (std::f64::consts::E).powf(-k * t)
+}
+
+fn cos_decay(total_steps: usize, current_step: usize) -> f64 {
+    // Calculate the cosine decay
+    let t = current_step as f64;
+    let T = total_steps as f64;
+
+    // Using the cosine decay formula
+    (std::f64::consts::PI * t / (2.0 * T)).cos().powi(2)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn denoise<M: super::WithForward>(
     model: &M,
@@ -101,18 +118,40 @@ pub fn denoise<M: super::WithForward>(
     vec_: &Tensor,
     timesteps: &[f64],
     guidance: f64,
+    eta: f64,
 ) -> Result<Tensor> {
     let b_sz = img.dim(0)?;
     let dev = img.device();
     let guidance = Tensor::full(guidance as f32, b_sz, dev)?;
+
     let mut img = img.clone();
+    let mut current_step = 0usize;
     for window in timesteps.windows(2) {
         let (t_curr, t_prev) = match window {
             [a, b] => (a, b),
             _ => continue,
         };
         let t_vec = Tensor::full(*t_curr as f32, b_sz, dev)?;
+
+        let sigma_down = t_curr.sqrt() - t_prev.sqrt();
+        println!(
+            "**flux current step {} - t_curr {} t_prev{}",
+            current_step, t_curr, t_prev
+        );
+        let decay_value = exponential_decay(timesteps.len(), current_step);
+        println!("flux current step {} decay {}", current_step, decay_value);
+        
+        let sigma_down_sqrt = sigma_down.sqrt();
+        println!("sigma_down_sqrt {:?}",sigma_down_sqrt);
+        let stdev = eta * (*t_curr * sigma_down_sqrt).sqrt() * decay_value;
+        println!(
+            "flux current step {} flux add noise {:?}",
+            current_step, stdev,
+        );        
+        let noise = img.randn_like(0.0, stdev)?;
+        img = (img + noise)?;
         let pred = model.forward(&img, img_ids, txt, txt_ids, &t_vec, vec_, Some(&guidance))?;
+        current_step += 1;
         img = (img + pred * (t_prev - t_curr))?
     }
     Ok(img)
