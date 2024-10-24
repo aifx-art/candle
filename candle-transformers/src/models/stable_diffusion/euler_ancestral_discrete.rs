@@ -42,9 +42,11 @@ pub struct EulerAncestralDiscreteSchedulerConfig {
 impl Default for EulerAncestralDiscreteSchedulerConfig {
     fn default() -> Self {
         Self {
-            beta_start: 0.00085f64,
-            beta_end: 0.012f64,
-            beta_schedule: BetaSchedule::ScaledLinear,
+            //beta_start: 0.00085f64, //og
+            beta_start: 0.0006185f64,
+            //beta_end: 0.012f64, //og
+            beta_end: 0.01618f64,
+            beta_schedule: BetaSchedule::ScaledLinear, //BetaSchedule::ScaledLinear,
             steps_offset: 1,
             prediction_type: PredictionType::Epsilon,
             train_timesteps: 1000,

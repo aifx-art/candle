@@ -372,12 +372,12 @@ impl StableDiffusionConfig {
             use_quant_conv: true,
             use_post_quant_conv: true,
         };
-        let scheduler = Arc::new(ddim::DDIMSchedulerConfig {
+       /*  let scheduler = Arc::new(ddim::DDIMSchedulerConfig {
             prediction_type,
             eta: eta.unwrap_or(0.),
             ..Default::default()
         });
-
+ */
         let height = if let Some(height) = height {
             // assert_eq!(height % 8, 0, "height has to be divisible by 8");
             if height % 8 != 0 {
@@ -428,7 +428,7 @@ impl StableDiffusionConfig {
                             euler_ancestral_discrete::EulerAncestralDiscreteSchedulerConfig {
                                 prediction_type,
                                 eta: eta.unwrap_or(0.),
-                                timestep_spacing: schedulers::TimestepSpacing::Trailing,
+                                timestep_spacing: schedulers::TimestepSpacing::Leading,
                                 ..Default::default()
                             },
                         );
@@ -498,6 +498,7 @@ impl StableDiffusionConfig {
             width,
             eta,
             // https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/scheduler/scheduler_config.json
+            //schedulers::PredictionType::Epsilon, //og
             schedulers::PredictionType::Epsilon,
             sampler,
         )
