@@ -115,7 +115,13 @@ fn run(args: Args) -> Result<()> {
         let name = "stabilityai/stable-diffusion-3.5-large";// "stabilityai/stable-diffusion-3-medium";
         api.repo(hf_hub::Repo::model(name.to_string()))
     };
-    let model_file = sai_repo.get("sd3_medium_incl_clips_t5xxlfp16.safetensors")?;
+
+    let sai_repo_3m = {
+        let name =  "stabilityai/stable-diffusion-3-medium";
+        api.repo(hf_hub::Repo::model(name.to_string()))
+    };
+
+    let model_file = sai_repo_3m.get("sd3_medium_incl_clips_t5xxlfp16.safetensors")?;
     let vb_fp16 = unsafe {
         candle_nn::VarBuilder::from_mmaped_safetensors(&[model_file.clone()], DType::F16, &device)?
     };
