@@ -112,7 +112,7 @@ fn run(args: Args) -> Result<()> {
 
     let api = hf_hub::api::sync::Api::new()?;
     let sai_repo = {
-        let name = "stabilityai/stable-diffusion-3-medium";
+        let name = "stabilityai/stable-diffusion-3.5-large";// "stabilityai/stable-diffusion-3-medium";
         api.repo(hf_hub::Repo::model(name.to_string()))
     };
     let model_file = sai_repo.get("sd3_medium_incl_clips_t5xxlfp16.safetensors")?;
