@@ -139,7 +139,9 @@ fn main() -> Result<()> {
         };
         let clip_g_file = sai_repo.get("text_encoders/clip_g.safetensors")?;
         let clip_l_file = sai_repo.get("text_encoders/clip_l.safetensors")?;
-        let t5xxl_file = sai_repo.get("text_encoders/t5xxl_fp16.safetensors")?;
+        //let t5xxl_file = sai_repo.get("text_encoders/t5xxl_fp16.safetensors")?;
+        let t5xxl_file = sai_repo.get("text_encoders/t5xxl_fp8_e4m3fn.safetensors")?;
+        
         let model_file = {
             let model_file = match which {
                 Which::V3_5Large => "sd3.5_large.safetensors",
