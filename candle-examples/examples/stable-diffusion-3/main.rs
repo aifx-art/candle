@@ -157,7 +157,7 @@ fn main() -> Result<()> {
             &device,
         )?;
         let vb = unsafe {
-            candle_nn::VarBuilder::from_mmaped_safetensors(&[model_file], DType::BF16, &device)?
+            candle_nn::VarBuilder::from_mmaped_safetensors(&[model_file], DType::F16, &device)?
         };
         (MMDiTConfig::sd3_5_large(), triple, vb)
     } else {
