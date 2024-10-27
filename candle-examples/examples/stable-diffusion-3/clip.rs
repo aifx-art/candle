@@ -240,7 +240,7 @@ impl StableDiffusion3TripleClipWithTokenizer {
         let t5_embeddings = self
             .t5
             .encode_text_to_embedding(prompt, device)?
-            .to_dtype(DType::F16)?;
+            .to_dtype(DType::BF16)?;
         let context = Tensor::cat(&[&clip_embeddings_concat, &t5_embeddings], D::Minus2)?;
         Ok((context, y))
     }

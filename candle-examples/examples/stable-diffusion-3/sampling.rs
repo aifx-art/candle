@@ -15,7 +15,7 @@ pub fn euler_sample(
     height: usize,
     width: usize,
 ) -> Result<Tensor> {
-    let mut x = flux::sampling::get_noise(1, height, width, y.device())?.to_dtype(DType::F16)?;
+    let mut x = flux::sampling::get_noise(1, height, width, y.device())?.to_dtype(DType::BF16)?;
     let sigmas = (0..=num_inference_steps)
         .map(|x| x as f64 / num_inference_steps as f64)
         .rev()
