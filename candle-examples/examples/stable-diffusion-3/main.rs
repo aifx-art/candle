@@ -139,8 +139,8 @@ fn main() -> Result<()> {
         };
         let clip_g_file = sai_repo.get("text_encoders/clip_g.safetensors")?;
         let clip_l_file = sai_repo.get("text_encoders/clip_l.safetensors")?;
-        //let t5xxl_file = sai_repo.get("text_encoders/t5xxl_fp16.safetensors")?;
-        let t5xxl_file = sai_repo.get("text_encoders/t5xxl_fp8_e4m3fn.safetensors")?;
+        let t5xxl_file = sai_repo.get("text_encoders/t5xxl_fp16.safetensors")?;
+        //let t5xxl_file = sai_repo.get("text_encoders/t5xxl_fp8_e4m3fn.safetensors")?;
         
         let model_file = {
             let model_file = match which {
@@ -171,7 +171,7 @@ fn main() -> Result<()> {
         };
 
         let vb_fp32 = unsafe {
-            candle_nn::VarBuilder::from_mmaped_safetensors(&[model_file], DType::F32, &device)?
+            candle_nn::VarBuilder::from_mmaped_safetensors(&[model_file], DType::F16, &device)?
         };
         let triple = StableDiffusion3TripleClipWithTokenizer::new(
             vb_fp16.pp("text_encoders"),
