@@ -138,25 +138,25 @@ fn main() -> Result<()> {
             api.repo(hf_hub::Repo::model(name.to_string()))
         };
 
-        let q_repo = api.repo(hf_hub::Repo::model("Comfy-Org/stable-diffusion-3.5-fp8".to_string()));
+        //let q_repo = api.repo(hf_hub::Repo::model("Comfy-Org/stable-diffusion-3.5-fp8".to_string()));
 
         let clip_g_file = sai_repo.get("text_encoders/clip_g.safetensors")?;
         let clip_l_file = sai_repo.get("text_encoders/clip_l.safetensors")?;
         let t5xxl_file = sai_repo.get("text_encoders/t5xxl_fp16.safetensors")?;
         //let t5xxl_file = sai_repo.get("text_encoders/t5xxl_fp8_e4m3fn.safetensors")?;
         
-        // let model_file = {
-        //     let model_file = match which {
-        //         Which::V3_5Large => "sd3.5_large.safetensors",
-        //         Which::V3_5LargeTurbo => "sd3.5_large_turbo.safetensors",
-        //         Which::V3Medium => unreachable!(),
-        //     };
-        //     sai_repo.get(model_file)?
-        // };
-
         let model_file = {
-            q_repo.get("sd3.5_large_fp8_scaled.safetensors")?
+            let model_file = match which {
+                Which::V3_5Large => "sd3.5_large.safetensors",
+                Which::V3_5LargeTurbo => "sd3.5_large_turbo.safetensors",
+                Which::V3Medium => unreachable!(),
+            };
+            sai_repo.get(model_file)?
         };
+
+        // let model_file = {
+        //     q_repo.get("sd3.5_large_fp8_scaled.safetensors")?
+        // };
         let triple = StableDiffusion3TripleClipWithTokenizer::new_split(
             &clip_g_file,
             &clip_l_file,
