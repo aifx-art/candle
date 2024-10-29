@@ -155,7 +155,7 @@ fn main() -> Result<()> {
         // };
 
         let model_file = {
-            sai_repo.get("sd3.5_large_fp8_scaled.safetensors")?
+            q_repo.get("sd3.5_large_fp8_scaled.safetensors")?
         };
         let triple = StableDiffusion3TripleClipWithTokenizer::new_split(
             &clip_g_file,
