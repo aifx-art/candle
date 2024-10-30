@@ -162,11 +162,8 @@ fn main() -> Result<()> {
             api.repo(hf_hub::Repo::model(name.to_string()))
         };
         let clip_g_file = sai_repo_for_text_encoders.get("text_encoders/clip_g.safetensors")?;
-        println!("loaded clip g");
         let clip_l_file = sai_repo_for_text_encoders.get("text_encoders/clip_l.safetensors")?;
-        println!("loaded clip l");
         let t5xxl_file = sai_repo_for_text_encoders.get("text_encoders/t5xxl_fp16.safetensors")?;
-        println!("loaded clip t5xxl");
         let model_file = {
             let model_file = match which {
                 Which::V3_5Large => "sd3.5_large.safetensors",
@@ -176,14 +173,12 @@ fn main() -> Result<()> {
             };
             sai_repo_for_mmdit.get(model_file)?
         };
-        println!("loaded model");
         let triple = StableDiffusion3TripleClipWithTokenizer::new_split(
             &clip_g_file,
             &clip_l_file,
             &t5xxl_file,
             &device,
         )?;
-        println!("triple encoder created");
         let vb = unsafe {
             candle_nn::VarBuilder::from_mmaped_safetensors(&[model_file], DType::F16, &device)?
         };
@@ -199,32 +194,19 @@ fn main() -> Result<()> {
             api.repo(hf_hub::Repo::model(name.to_string()))
         };
         let model_file = sai_repo.get("sd3_medium_incl_clips_t5xxlfp16.safetensors")?;
-        let vb_fp16 = unsafe {
+        let vb = unsafe {
             candle_nn::VarBuilder::from_mmaped_safetensors(&[&model_file], DType::F16, &device)?
         };
-
-        let vb_fp32 = unsafe {
-            candle_nn::VarBuilder::from_mmaped_safetensors(&[model_file], DType::F16, &device)?
-        };
-        let triple = StableDiffusion3TripleClipWithTokenizer::new(
-            vb_fp16.pp("text_encoders"),
-            vb_fp32.pp("text_encoders"),
-        )?;
-        (MMDiTConfig::sd3_medium(), triple, vb_fp16)
+        let triple = StableDiffusion3TripleClipWithTokenizer::new(vb.pp("text_encoders"))?;
+        (MMDiTConfig::sd3_medium(), triple, vb)
     };
     let (context, y) = triple.encode_text_to_embedding(prompt.as_str(), &device)?;
-    println!("context for prompt encoded");
     let (context_uncond, y_uncond) =
         triple.encode_text_to_embedding(uncond_prompt.as_str(), &device)?;
-    println!("context for prompt encoded");
     // Drop the text model early to avoid using too much memory.
     drop(triple);
-    println!("dropped the triple clips");
     let context = Tensor::cat(&[context, context_uncond], 0)?;
-    println!("done concat the contexts");
     let y = Tensor::cat(&[y, y_uncond], 0)?;
-    println!("done concat the conditioning");
-
 
     if let Some(seed) = seed {
         device.set_seed(seed)?;
