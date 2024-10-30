@@ -208,13 +208,19 @@ fn main() -> Result<()> {
         (MMDiTConfig::sd3_medium(), triple, vb_fp16)
     };
     let (context, y) = triple.encode_text_to_embedding(prompt.as_str(), &device)?;
+    println!("context for prompt encoded");
     let (context_uncond, y_uncond) =
         triple.encode_text_to_embedding(uncond_prompt.as_str(), &device)?;
+    println!("context for prompt encoded");
     // Drop the text model early to avoid using too much memory.
     drop(triple);
+    println!("dropped the triple clips");
     let context = Tensor::cat(&[context, context_uncond], 0)?;
+    println!("concat the contexts");
     let y = Tensor::cat(&[y, y_uncond], 0)?;
+    println!("concat the conditioning");
 
+    
     if let Some(seed) = seed {
         device.set_seed(seed)?;
     }
