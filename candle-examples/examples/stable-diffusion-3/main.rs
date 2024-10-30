@@ -162,8 +162,11 @@ fn main() -> Result<()> {
             api.repo(hf_hub::Repo::model(name.to_string()))
         };
         let clip_g_file = sai_repo_for_text_encoders.get("text_encoders/clip_g.safetensors")?;
+        println!("loaded clip g");
         let clip_l_file = sai_repo_for_text_encoders.get("text_encoders/clip_l.safetensors")?;
+        println!("loaded clip l");
         let t5xxl_file = sai_repo_for_text_encoders.get("text_encoders/t5xxl_fp16.safetensors")?;
+        println!("loaded clip t5xxl");
         let model_file = {
             let model_file = match which {
                 Which::V3_5Large => "sd3.5_large.safetensors",
@@ -173,12 +176,14 @@ fn main() -> Result<()> {
             };
             sai_repo_for_mmdit.get(model_file)?
         };
+        println!("loaded model");
         let triple = StableDiffusion3TripleClipWithTokenizer::new_split(
             &clip_g_file,
             &clip_l_file,
             &t5xxl_file,
             &device,
         )?;
+        
         let vb = unsafe {
             candle_nn::VarBuilder::from_mmaped_safetensors(&[model_file], DType::F16, &device)?
         };
@@ -220,7 +225,7 @@ fn main() -> Result<()> {
     let y = Tensor::cat(&[y, y_uncond], 0)?;
     println!("concat the conditioning");
 
-    
+
     if let Some(seed) = seed {
         device.set_seed(seed)?;
     }
