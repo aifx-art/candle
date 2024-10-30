@@ -221,9 +221,9 @@ fn main() -> Result<()> {
     drop(triple);
     println!("dropped the triple clips");
     let context = Tensor::cat(&[context, context_uncond], 0)?;
-    println!("concat the contexts");
+    println!("done concat the contexts");
     let y = Tensor::cat(&[y, y_uncond], 0)?;
-    println!("concat the conditioning");
+    println!("done concat the conditioning");
 
 
     if let Some(seed) = seed {
