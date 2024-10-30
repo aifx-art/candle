@@ -183,7 +183,7 @@ fn main() -> Result<()> {
             &t5xxl_file,
             &device,
         )?;
-        
+        println!("triple encoder created");
         let vb = unsafe {
             candle_nn::VarBuilder::from_mmaped_safetensors(&[model_file], DType::F16, &device)?
         };
