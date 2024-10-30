@@ -142,8 +142,8 @@ fn main() -> Result<()> {
 
         let clip_g_file = sai_repo.get("text_encoders/clip_g.safetensors")?;
         let clip_l_file = sai_repo.get("text_encoders/clip_l.safetensors")?;
-        let t5xxl_file = sai_repo.get("text_encoders/t5xxl_fp16.safetensors")?;
-        //let t5xxl_file = sai_repo.get("text_encoders/t5xxl_fp8_e4m3fn.safetensors")?;
+        //let t5xxl_file = sai_repo.get("text_encoders/t5xxl_fp16.safetensors")?;
+        let t5xxl_file = sai_repo.get("text_encoders/t5xxl_fp8_e4m3fn.safetensors")?;
         
         // let model_file = {
         //     let model_file = match which {
@@ -157,7 +157,7 @@ fn main() -> Result<()> {
          let model_file = {
              q_repo.get("sd3.5_large_fp8_scaled.safetensors")?
          };
-         
+
         let triple = StableDiffusion3TripleClipWithTokenizer::new_split(
             &clip_g_file,
             &clip_l_file,
