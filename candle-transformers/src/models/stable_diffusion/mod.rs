@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use candle::{DType, Device, Result};
 use candle_nn as nn;
+use schedulers::TimestepSpacing;
 
 use self::schedulers::{Scheduler, SchedulerConfig};
 
@@ -428,7 +429,7 @@ impl StableDiffusionConfig {
                             euler_ancestral_discrete::EulerAncestralDiscreteSchedulerConfig {
                                 prediction_type,
                                 eta: eta.unwrap_or(0.),
-                                timestep_spacing: schedulers::TimestepSpacing::Leading,
+                                timestep_spacing: schedulers::TimestepSpacing::Trailing,
                                 ..Default::default()
                             },
                         );
@@ -446,6 +447,7 @@ impl StableDiffusionConfig {
                         let scheduler = Arc::new(ddim::DDIMSchedulerConfig {
                             prediction_type,
                             eta: eta.unwrap_or(0.),
+                            timestep_spacing: TimestepSpacing::Trailing,
                             ..Default::default()
                         });
                         StableDiffusionConfig {
