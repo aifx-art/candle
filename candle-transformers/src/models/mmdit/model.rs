@@ -42,6 +42,37 @@ impl Config {
         }
     }
 
+    pub fn auraflow() -> Self {
+        Self {
+            patch_size: 2,
+            in_channels: 4,
+            out_channels: 4,
+            depth: 24,
+            head_size: 64,
+            adm_in_channels: 2048,
+            pos_embed_max_size: 1024,
+            context_embed_size: 4096,
+            frequency_embedding_size: 256,
+        }
+    }
+
+    /*
+     def __init__(
+        self,
+        sample_size: int = 64,
+        patch_size: int = 2,
+        in_channels: int = 4,
+        num_mmdit_layers: int = 4,
+        num_single_dit_layers: int = 32,
+        attention_head_dim: int = 256,
+        num_attention_heads: int = 12,
+        joint_attention_dim: int = 2048,
+        caption_projection_dim: int = 3072,
+        out_channels: int = 4,
+        pos_embed_max_size: int = 1024,
+    ):
+     */
+
     pub fn sd3_5_medium() -> Self {
         Self {
             patch_size: 2,
