@@ -373,14 +373,13 @@ impl StableDiffusionConfig {
             use_quant_conv: true,
             use_post_quant_conv: true,
         };
-       /*  let scheduler = Arc::new(ddim::DDIMSchedulerConfig {
-            prediction_type,
-            eta: eta.unwrap_or(0.),
-            ..Default::default()
-        });
- */
+        /*  let scheduler = Arc::new(ddim::DDIMSchedulerConfig {
+                   prediction_type,
+                   eta: eta.unwrap_or(0.),
+                   ..Default::default()
+               });
+        */
         let height = if let Some(height) = height {
-            // assert_eq!(height % 8, 0, "height has to be divisible by 8");
             if height % 8 != 0 {
                 let t = height / 8;
                 (t + 1) * 8
@@ -392,7 +391,6 @@ impl StableDiffusionConfig {
         };
 
         let width = if let Some(width) = width {
-            //  assert_eq!(width % 8, 0, "width has to be divisible by 8");
             if width % 8 != 0 {
                 let t = width / 8;
                 (t + 1) * 8
@@ -406,62 +404,60 @@ impl StableDiffusionConfig {
         println!("height, width: {} {}", height, width);
 
         match sampler {
-            Some(sampler) => {
-                match sampler.as_str() {
-                    "DDPM" => {
-                        let scheduler = Arc::new(ddpm::DDPMSchedulerConfig {
-                            prediction_type,
-                            eta: eta.unwrap_or(0.),
-                            ..Default::default()
-                        });
-                        StableDiffusionConfig {
-                            width,
-                            height,
-                            clip: clip::Config::sdxl(),
-                            clip2: Some(clip::Config::sdxl2()),
-                            autoencoder,
-                            scheduler,
-                            unet,
-                        }
-                    }
-                    "EULER_ANCESTRAL" => {
-                        let scheduler = Arc::new(
-                            euler_ancestral_discrete::EulerAncestralDiscreteSchedulerConfig {
-                                prediction_type,
-                                eta: eta.unwrap_or(0.),
-                                timestep_spacing: schedulers::TimestepSpacing::Trailing,
-                                ..Default::default()
-                            },
-                        );
-                        StableDiffusionConfig {
-                            width,
-                            height,
-                            clip: clip::Config::sdxl(),
-                            clip2: Some(clip::Config::sdxl2()),
-                            autoencoder,
-                            scheduler,
-                            unet,
-                        }
-                    }
-                    "DDIM" | &_ => {
-                        let scheduler = Arc::new(ddim::DDIMSchedulerConfig {
-                            prediction_type,
-                            eta: eta.unwrap_or(0.),
-                            timestep_spacing: TimestepSpacing::Trailing,
-                            ..Default::default()
-                        });
-                        StableDiffusionConfig {
-                            width,
-                            height,
-                            clip: clip::Config::sdxl(),
-                            clip2: Some(clip::Config::sdxl2()),
-                            autoencoder,
-                            scheduler,
-                            unet,
-                        }
+            Some(sampler) => match sampler.as_str() {
+                "DDPM" => {
+                    let scheduler = Arc::new(ddpm::DDPMSchedulerConfig {
+                        prediction_type,
+                        eta: eta.unwrap_or(0.),
+                        ..Default::default()
+                    });
+                    StableDiffusionConfig {
+                        width,
+                        height,
+                        clip: clip::Config::sdxl(),
+                        clip2: Some(clip::Config::sdxl2()),
+                        autoencoder,
+                        scheduler,
+                        unet,
                     }
                 }
-            }
+                "EULER_ANCESTRAL" => {
+                    let scheduler = Arc::new(
+                        euler_ancestral_discrete::EulerAncestralDiscreteSchedulerConfig {
+                            prediction_type,
+                            eta: eta.unwrap_or(0.),
+                            timestep_spacing: schedulers::TimestepSpacing::Trailing,
+                            ..Default::default()
+                        },
+                    );
+                    StableDiffusionConfig {
+                        width,
+                        height,
+                        clip: clip::Config::sdxl(),
+                        clip2: Some(clip::Config::sdxl2()),
+                        autoencoder,
+                        scheduler,
+                        unet,
+                    }
+                }
+                "DDIM" | &_ => {
+                    let scheduler = Arc::new(ddim::DDIMSchedulerConfig {
+                        prediction_type,
+                        eta: eta.unwrap_or(0.),
+                        timestep_spacing: TimestepSpacing::Trailing,
+                        ..Default::default()
+                    });
+                    StableDiffusionConfig {
+                        width,
+                        height,
+                        clip: clip::Config::sdxl(),
+                        clip2: Some(clip::Config::sdxl2()),
+                        autoencoder,
+                        scheduler,
+                        unet,
+                    }
+                }
+            },
             None => {
                 let scheduler = Arc::new(ddim::DDIMSchedulerConfig {
                     prediction_type,
