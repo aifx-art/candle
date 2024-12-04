@@ -159,8 +159,9 @@ pub fn denoise<M: super::WithForward>(
     Ok(img)
 }
 
+//narrow invalid args start + len > dim_len: [1, 3952, 64], dim: 0, start: 1, len:1))  
 
 fn apply_cfg(cfg_scale: f64, noise_pred: &Tensor) -> Result<Tensor> {
-    Ok(((cfg_scale * noise_pred.narrow(0, 0, 1)?)?
-        - ((cfg_scale - 1.0) * noise_pred.narrow(0, 1, 1)?)?)?)
+    Ok(((cfg_scale * noise_pred)?
+        - ((cfg_scale - 1.0) * noise_pred)?)?)
 }
