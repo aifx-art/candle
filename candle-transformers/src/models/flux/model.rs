@@ -33,7 +33,7 @@ impl Config {
             axes_dim: vec![16, 56, 56],
             theta: 10_000,
             qkv_bias: true,
-            guidance_embed: true,
+            guidance_embed: false,
         }
     }
 

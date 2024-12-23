@@ -122,7 +122,7 @@ pub fn denoise<M: super::WithForward>(
 ) -> Result<Tensor> {
     let b_sz = img.dim(0)?;
     let dev = img.device();
-    let guidance = Tensor::full(guidance as f32, b_sz, dev)?;
+    //let guidance = Tensor::full(guidance as f32, b_sz, dev)?;
 
     let mut img = img.clone();
     let mut current_step = 0usize;
@@ -150,9 +150,18 @@ pub fn denoise<M: super::WithForward>(
         );        
         let noise = img.randn_like(0.0, stdev)?;
         img = (img + noise)?;
-        let pred = model.forward(&img, img_ids, txt, txt_ids, &t_vec, vec_, Some(&guidance))?;
+        //let pred = model.forward(&img, img_ids, txt, txt_ids, &t_vec, vec_, Some(&guidance))?;
+        let pred = model.forward(&img, img_ids, txt, txt_ids, &t_vec, vec_, None)?;
+        let cfg_pred = apply_cfg(guidance, &pred)?;
         current_step += 1;
-        img = (img + pred * (t_prev - t_curr))?
+        img = (img + cfg_pred * (t_prev - t_curr))?
     }
     Ok(img)
+}
+
+//narrow invalid args start + len > dim_len: [1, 3952, 64], dim: 0, start: 1, len:1))  
+
+fn apply_cfg(cfg_scale: f64, noise_pred: &Tensor) -> Result<Tensor> {
+    Ok(((cfg_scale * noise_pred)?
+        - ((cfg_scale - 1.0) * noise_pred)?)?)
 }
