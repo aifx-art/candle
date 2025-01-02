@@ -149,7 +149,7 @@ impl Scheduler for DDPMScheduler {
         Ok(sample)
     }
 
-    fn step(&self, model_output: &Tensor, timestep: usize, sample: &Tensor) -> Result<Tensor> {
+    fn step(&mut self, model_output: &Tensor, timestep: usize, sample: &Tensor) -> Result<Tensor> {
         let prev_t = timestep as isize - self.step_ratio as isize;
 
         // https://github.com/huggingface/diffusers/blob/df2b548e893ccb8a888467c2508756680df22821/src/diffusers/schedulers/scheduling_ddpm.py#L272
