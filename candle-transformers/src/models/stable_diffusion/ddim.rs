@@ -127,9 +127,7 @@ impl DDIMScheduler {
 
 impl Scheduler for DDIMScheduler {
     /// Performs a backward step during inference.
-    fn step(&self, model_output: &Tensor, timestep: usize, sample: &Tensor) -> Result<Tensor> {
-        let dtype = sample.dtype();
-
+    fn step(&mut self, model_output: &Tensor, timestep: usize, sample: &Tensor) -> Result<Tensor> {
         let timestep = if timestep >= self.alphas_cumprod.len() {
             timestep - 1
         } else {
@@ -209,7 +207,7 @@ impl Scheduler for DDIMScheduler {
                 std_dev_t,
                 prev_sample.shape(),
                 &cpu_device,
-            )?.to_dtype(dtype).unwrap();            
+            )?.to_dtype(sample.dtype()).unwrap();            
             let gpu_random_tensor = random_tensor.to_device(prev_sample.device())?;
             prev_sample + gpu_random_tensor
        // } else {
