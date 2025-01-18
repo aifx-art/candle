@@ -1,110 +1,59 @@
-//! Mixtral Model, based on the Mistral architecture
+//! Helium inference implementation.
 //!
-//! See Mistral and Mixtral at:
-//! - [Hugging Face](https://huggingface.co/docs/transformers/model_doc/mixtral)
-//! - [Github](https://github.com/mistralai/mistral-src)
-//!
+//! See the model card on Hugging Face's [hub](https://huggingface.co/kmhf/helium-2b).
 
-use crate::models::with_tracing::{linear_no_bias, Linear, RmsNorm};
-/// Mistral LLM, https://github.com/mistralai/mistral-src
-use candle::{DType, Device, Module, Result, Tensor, D};
-use candle_nn::{Activation, VarBuilder};
+use super::with_tracing::{linear_b as linear, Linear, RmsNorm};
+use candle::{DType, Device, Result, Tensor, D};
+use candle_nn::{Module, VarBuilder};
 use std::sync::Arc;
-
-fn default_num_attention_heads() -> usize {
-    32
-}
 
 fn default_use_flash_attn() -> bool {
     false
 }
 
-fn default_hidden_act() -> candle_nn::Activation {
-    candle_nn::Activation::Silu
-}
-
-#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct Config {
-    pub vocab_size: usize,
+    pub attention_bias: bool,
+    pub bos_token_id: u32,
+    pub eos_token_id: u32,
+    pub head_dim: usize,
+    pub hidden_act: candle_nn::Activation,
     pub hidden_size: usize,
     pub intermediate_size: usize,
-    pub num_hidden_layers: usize,
-    #[serde(default = "default_num_attention_heads")]
-    pub num_attention_heads: usize,
-    pub head_dim: Option<usize>,
-    pub num_key_value_heads: usize,
-    #[serde(default = "default_hidden_act")]
-    pub hidden_act: Activation,
     pub max_position_embeddings: usize,
+    pub mlp_bias: bool,
+    pub num_attention_heads: usize,
+    pub num_hidden_layers: usize,
+    pub num_key_value_heads: usize,
     pub rms_norm_eps: f64,
     pub rope_theta: f64,
-    pub sliding_window: Option<usize>,
+    pub tie_word_embeddings: bool,
+    pub vocab_size: usize,
     #[serde(default = "default_use_flash_attn")]
     pub use_flash_attn: bool,
 }
 
 impl Config {
-    // https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/config.json
-    pub fn config_7b_v0_1(use_flash_attn: bool) -> Self {
+    pub fn config_2b(use_flash_attn: bool) -> Self {
         Self {
-            vocab_size: 32000,
-            hidden_size: 4096,
-            intermediate_size: 14336,
-            num_hidden_layers: 32,
-            num_attention_heads: 32,
-            head_dim: None,
-            num_key_value_heads: 8,
-            hidden_act: Activation::Silu,
-            max_position_embeddings: 32768,
-            rms_norm_eps: 1e-5,
-            rope_theta: 10_000.,
-            sliding_window: Some(4096),
+            attention_bias: false,
+            bos_token_id: 1,
+            eos_token_id: 2,
+            head_dim: 128,
+            hidden_act: candle_nn::Activation::Silu,
+            hidden_size: 2560,
+            intermediate_size: 7040,
+            max_position_embeddings: 4096,
+            mlp_bias: false,
+            num_attention_heads: 20,
+            num_hidden_layers: 24,
+            num_key_value_heads: 20,
+            rms_norm_eps: 1e-08,
+            rope_theta: 100000.0,
+            tie_word_embeddings: false,
+            vocab_size: 48000,
             use_flash_attn,
         }
-    }
-
-    // https://huggingface.co/Open-Orca/Mistral-7B-OpenOrca/blob/main/config.json
-    // https://huggingface.co/teknium/OpenHermes-2.5-Mistral-7B/blob/main/config.json
-    pub fn config_chat_ml(use_flash_attn: bool) -> Self {
-        Self {
-            vocab_size: 32002,
-            hidden_size: 4096,
-            intermediate_size: 14336,
-            num_hidden_layers: 32,
-            num_attention_heads: 32,
-            head_dim: None,
-            num_key_value_heads: 8,
-            hidden_act: Activation::Silu,
-            max_position_embeddings: 32768,
-            rms_norm_eps: 1e-5,
-            rope_theta: 10_000.,
-            sliding_window: Some(4096),
-            use_flash_attn,
-        }
-    }
-
-    // https://huggingface.co/amazon/MistralLite/blob/main/config.json
-    pub fn config_amazon_mistral_lite(use_flash_attn: bool) -> Self {
-        Self {
-            vocab_size: 32003,
-            hidden_size: 4096,
-            intermediate_size: 14336,
-            num_hidden_layers: 32,
-            num_attention_heads: 32,
-            head_dim: None,
-            num_key_value_heads: 8,
-            hidden_act: Activation::Silu,
-            max_position_embeddings: 32768,
-            rms_norm_eps: 1e-5,
-            rope_theta: 10_000.,
-            sliding_window: Some(4096),
-            use_flash_attn,
-        }
-    }
-
-    fn head_dim(&self) -> usize {
-        self.head_dim
-            .unwrap_or(self.hidden_size / self.num_attention_heads)
     }
 }
 
@@ -117,7 +66,7 @@ struct RotaryEmbedding {
 impl RotaryEmbedding {
     fn new(dtype: DType, cfg: &Config, dev: &Device) -> Result<Self> {
         let rope_theta = cfg.rope_theta as f32;
-        let dim = cfg.head_dim();
+        let dim = cfg.head_dim;
         let max_seq_len = cfg.max_position_embeddings;
         let inv_freq: Vec<_> = (0..dim)
             .step_by(2)
@@ -144,8 +93,8 @@ impl RotaryEmbedding {
         let (_b_sz, _h, seq_len, _n_embd) = q.dims4()?;
         let cos = self.cos.narrow(0, seqlen_offset, seq_len)?;
         let sin = self.sin.narrow(0, seqlen_offset, seq_len)?;
-        let q_embed = candle_nn::rotary_emb::rope(q, &cos, &sin)?;
-        let k_embed = candle_nn::rotary_emb::rope(k, &cos, &sin)?;
+        let q_embed = candle_nn::rotary_emb::rope_i(q, &cos, &sin)?;
+        let k_embed = candle_nn::rotary_emb::rope_i(k, &cos, &sin)?;
         Ok((q_embed, k_embed))
     }
 }
@@ -156,16 +105,17 @@ struct MLP {
     gate_proj: Linear,
     up_proj: Linear,
     down_proj: Linear,
-    act_fn: Activation,
+    act_fn: candle_nn::Activation,
 }
 
 impl MLP {
     fn new(cfg: &Config, vb: VarBuilder) -> Result<Self> {
         let hidden_sz = cfg.hidden_size;
         let intermediate_sz = cfg.intermediate_size;
-        let gate_proj = linear_no_bias(hidden_sz, intermediate_sz, vb.pp("gate_proj"))?;
-        let up_proj = linear_no_bias(hidden_sz, intermediate_sz, vb.pp("up_proj"))?;
-        let down_proj = linear_no_bias(intermediate_sz, hidden_sz, vb.pp("down_proj"))?;
+        let bias = cfg.mlp_bias;
+        let gate_proj = linear(hidden_sz, intermediate_sz, bias, vb.pp("gate_proj"))?;
+        let up_proj = linear(hidden_sz, intermediate_sz, bias, vb.pp("up_proj"))?;
+        let down_proj = linear(intermediate_sz, hidden_sz, bias, vb.pp("down_proj"))?;
         Ok(Self {
             gate_proj,
             up_proj,
@@ -220,11 +170,12 @@ impl Attention {
         let num_heads = cfg.num_attention_heads;
         let num_kv_heads = cfg.num_key_value_heads;
         let num_kv_groups = num_heads / num_kv_heads;
-        let head_dim = cfg.head_dim();
-        let q_proj = linear_no_bias(hidden_sz, num_heads * head_dim, vb.pp("q_proj"))?;
-        let k_proj = linear_no_bias(hidden_sz, num_kv_heads * head_dim, vb.pp("k_proj"))?;
-        let v_proj = linear_no_bias(hidden_sz, num_kv_heads * head_dim, vb.pp("v_proj"))?;
-        let o_proj = linear_no_bias(num_heads * head_dim, hidden_sz, vb.pp("o_proj"))?;
+        let head_dim = cfg.head_dim;
+        let bias = cfg.attention_bias;
+        let q_proj = linear(hidden_sz, num_heads * head_dim, bias, vb.pp("q_proj"))?;
+        let k_proj = linear(hidden_sz, num_kv_heads * head_dim, bias, vb.pp("k_proj"))?;
+        let v_proj = linear(hidden_sz, num_kv_heads * head_dim, bias, vb.pp("v_proj"))?;
+        let o_proj = linear(num_heads * head_dim, hidden_sz, bias, vb.pp("o_proj"))?;
         Ok(Self {
             q_proj,
             k_proj,
@@ -364,7 +315,6 @@ pub struct Model {
     layers: Vec<DecoderLayer>,
     norm: RmsNorm,
     lm_head: Linear,
-    sliding_window: Option<usize>,
     device: Device,
     dtype: DType,
 }
@@ -382,13 +332,16 @@ impl Model {
             layers.push(layer)
         }
         let norm = RmsNorm::new(cfg.hidden_size, cfg.rms_norm_eps, vb_m.pp("norm"))?;
-        let lm_head = linear_no_bias(cfg.hidden_size, cfg.vocab_size, vb.pp("lm_head"))?;
+        let lm_head = if cfg.tie_word_embeddings {
+            Linear::from_weights(embed_tokens.embeddings().clone(), None)
+        } else {
+            linear(cfg.hidden_size, cfg.vocab_size, false, vb.pp("lm_head"))?
+        };
         Ok(Self {
             embed_tokens,
             layers,
             norm,
             lm_head,
-            sliding_window: cfg.sliding_window,
             device: vb.device().clone(),
             dtype: vb.dtype(),
         })
@@ -399,17 +352,8 @@ impl Model {
         tgt_len: usize,
         seqlen_offset: usize,
     ) -> Result<Tensor> {
-        let sliding_window = self.sliding_window.unwrap_or(tgt_len + 1);
         let mask: Vec<_> = (0..tgt_len)
-            .flat_map(|i| {
-                (0..tgt_len).map(move |j| {
-                    if i < j || j + sliding_window < i {
-                        f32::NEG_INFINITY
-                    } else {
-                        0.
-                    }
-                })
-            })
+            .flat_map(|i| (0..tgt_len).map(move |j| if i < j { f32::NEG_INFINITY } else { 0. }))
             .collect();
         let mask = Tensor::from_slice(&mask, (tgt_len, tgt_len), &self.device)?;
         let mask = if seqlen_offset > 0 {
@@ -437,22 +381,6 @@ impl Model {
         let mut xs = self.embed_tokens.forward(input_ids)?;
         for layer in self.layers.iter_mut() {
             xs = layer.forward(&xs, attention_mask.as_ref(), seqlen_offset)?
-        }
-        xs.narrow(1, seq_len - 1, 1)?
-            .apply(&self.norm)?
-            .apply(&self.lm_head)
-    }
-
-    pub fn forward_embeds(
-        &mut self,
-        xs: &Tensor,
-        attn_mask: Option<&Tensor>,
-        seqlen_offset: usize,
-    ) -> Result<Tensor> {
-        let (_b_size, seq_len, _) = xs.dims3()?;
-        let mut xs = xs.clone();
-        for layer in self.layers.iter_mut() {
-            xs = layer.forward(&xs, attn_mask, seqlen_offset)?
         }
         xs.narrow(1, seq_len - 1, 1)?
             .apply(&self.norm)?
