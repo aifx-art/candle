@@ -504,7 +504,234 @@ fn main() -> anyhow::Result<()> {
         None => Prompt::One(DEFAULT_PROMPT.to_string()),
     };
 
-    let mut pre_prompt_tokens = vec![];
+    //let pre_str = "You are a happy surfer dude that is totally into full body mind health. You speak in a surfer dude slang way. Staying positive and reminding about full body breathing and how it is beneficial.";
+    let pre_str ="you will receive a json used in creating a prompt. and a prompt. you will use those to generate a new json of traits.
+like this output
+[
+  {
+            \"display_type\": null,
+            \"trait_type\": \"Monsters\",
+            \"value\": \"ethereal scary monsters\"
+        },
+]
+the trait_type is from the name of the section in the json provided
+go throught he prompt and find which sections of the json were used and create a new json in the output style from the found segemnts in the input json
+
+here is the json
+{
+  \"pipeline\": [
+    \"Open Style\",
+    \"Location\",  
+    \"Location Mod\",
+    \"Mood\",
+    \"Separator\",
+    \"Monsters\",
+    \"Action\",
+    \"Village\",
+    \"Village Mod\",
+    \"Separator\",
+    \"Village Mod\",
+    \"Separator\",
+    \"Style\"
+  ],  
+  \"traits\": [
+    {
+      \"name\": \"Separator\",
+      \"phrases\": [
+        [
+          \", \",
+          100
+        ]
+      ]
+    },
+    {
+      \"name\": \"Open Style\",
+      \"phrases\": [
+        [
+          \"beautiful moody landscape painting of\",
+          100
+        ]
+      ]
+    },
+    {
+      \"name\": \"Monsters\",
+      \"phrases\": [
+        [
+          \"ethereal scary monsters\",
+          100
+        ],
+        [
+          \"ethereal fright in the clouds\",
+          100
+        ],
+        [
+          \"giant scary monsters\",
+          100
+        ],
+        [
+          \"ethereal giant scary monsters\",
+          100
+        ],
+        [
+          \"ethereal scary monsters & demons\",
+          100
+        ]
+      ]
+    },
+    {
+      \"name\": \"Action\",
+      \"phrases\": [
+        [
+          \"destroying villages\",
+          100
+        ],
+        [
+          \"eating livestock\",
+          100
+        ],
+        [
+          \"breaking briges\",
+          100
+        ],
+        [
+          \"breaking buildings\",
+          100
+        ],
+        [
+          \"walking through the countryside\",
+          200
+        ],
+        [
+          \"with sharp fangs\",
+          100
+        ]
+      ]
+    },
+    {
+      \"name\": \"Location\",
+      \"phrases\": [
+        [
+          \"rolling hills\",
+          100
+        ],
+        [
+          \"countryside\",
+          100
+        ],
+        [
+          \"mountains\",
+          100
+        ]
+      ]
+    },
+    {
+      \"name\": \"Location Mod\",
+      \"phrases\": [
+        [
+          \"earthquake\",
+          100
+        ],
+        [
+          \"stary night\",
+          10
+        ],
+        [
+          \"clouds\",
+          100
+        ],
+        [
+          \"flooding river\",
+          100
+        ],
+        [
+          \"stormu thunderclouds\",
+          100
+        ]
+
+      ]
+    },
+    {
+      \"name\": \"Village\",
+      \"phrases\": [
+        [
+          \"small villages\",
+          100
+        ],
+        [
+          \"terraced villages\",
+          100
+        ]
+      ]
+    },
+    {
+      \"name\": \"Village Mod\",
+      \"phrases\": [
+        [
+          \"with houses\",
+          100
+        ],
+        [
+          \"with gothic tower spires.\",
+          100
+        ],
+        [
+          \"walking paths\",
+          100
+        ],
+        [
+          \"red brick\",
+          100
+        ],
+        [
+          \"people working the farmland\",
+          100
+        ],
+        [
+          \"mudflood\",
+          100
+        ],
+        [
+          \"aquaducts\",
+          100
+        ]
+      ]
+    },
+    {
+      \"name\": \"Mood\",
+      \"phrases\": [
+        [
+          \"rainbows, natural vibes.\",
+          100
+        ]
+      ]
+    },
+    {
+      \"name\": \"Style\",
+      \"phrases\": [
+        [
+          \"healthy glow, magical, ethereal, dynamic, \",
+          100
+        ]
+      ]
+    }
+  ],
+
+}
+note: you must adhere to the specified json output. dont add any extra fields or nested fields. 
+note: if a trait_type appears  more than once then you should  combine the trait_types of the same name into a single string for that trait_type
+NOTE: all values in result json are string types. not arrays.
+
+here is my prompt: 
+landscape painting of countryside earthquake rainbows, natural vibes. giant scary monsters walking through the countryside terraced villages with gothic tower spires. ,  with houses healthy glow, magical, ethereal, dynamic,  
+";
+    let mut pre_prompt_tokens = tos
+        .tokenizer()
+        .encode(pre_str, true)
+        .map_err(anyhow::Error::msg)?
+        .get_ids()
+        .to_vec();
+    //let mut pre_prompt_tokens = vec![];
+
     for prompt_index in 0.. {
         let prompt_str = match &prompt {
             Prompt::One(prompt) => prompt.clone(),
