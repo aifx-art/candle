@@ -7,71 +7,17 @@ extern crate accelerate_src;
 use anyhow::{Error as E, Result};
 use clap::Parser;
 
-use candle_transformers::models::gemma::{Config as Config1, Model as Model1};
-use candle_transformers::models::gemma2::{Config as Config2, Model as Model2};
-use candle_transformers::models::gemma3::{Config as Config3, Model as Model3};
+use candle_transformers::models::deepseek2::{DeepSeekV2, DeepSeekV2Config};
 
 use candle::{DType, Device, Tensor};
 use candle_examples::token_output_stream::TokenOutputStream;
 use candle_nn::VarBuilder;
-use candle_transformers::generation::LogitsProcessor;
+use candle_transformers::generation::{LogitsProcessor, Sampling};
 use hf_hub::{api::sync::Api, Repo, RepoType};
 use tokenizers::Tokenizer;
 
-#[derive(Clone, Debug, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum Which {
-    #[value(name = "2b")]
-    Base2B,
-    #[value(name = "7b")]
-    Base7B,
-    #[value(name = "2b-it")]
-    Instruct2B,
-    #[value(name = "7b-it")]
-    Instruct7B,
-    #[value(name = "1.1-2b-it")]
-    InstructV1_1_2B,
-    #[value(name = "1.1-7b-it")]
-    InstructV1_1_7B,
-    #[value(name = "code-2b")]
-    CodeBase2B,
-    #[value(name = "code-7b")]
-    CodeBase7B,
-    #[value(name = "code-2b-it")]
-    CodeInstruct2B,
-    #[value(name = "code-7b-it")]
-    CodeInstruct7B,
-    #[value(name = "2-2b")]
-    BaseV2_2B,
-    #[value(name = "2-2b-it")]
-    InstructV2_2B,
-    #[value(name = "2-9b")]
-    BaseV2_9B,
-    #[value(name = "2-9b-it")]
-    InstructV2_9B,
-    #[value(name = "3-1b")]
-    BaseV3_1B,
-    #[value(name = "3-1b-it")]
-    InstructV3_1B,
-}
-
-enum Model {
-    V1(Model1),
-    V2(Model2),
-    V3(Model3),
-}
-
-impl Model {
-    fn forward(&mut self, input_ids: &Tensor, pos: usize) -> candle::Result<Tensor> {
-        match self {
-            Self::V1(m) => m.forward(input_ids, pos),
-            Self::V2(m) => m.forward(input_ids, pos),
-            Self::V3(m) => m.forward(input_ids, pos),
-        }
-    }
-}
-
 struct TextGeneration {
-    model: Model,
+    model: DeepSeekV2,
     device: Device,
     tokenizer: TokenOutputStream,
     logits_processor: LogitsProcessor,
@@ -82,16 +28,31 @@ struct TextGeneration {
 impl TextGeneration {
     #[allow(clippy::too_many_arguments)]
     fn new(
-        model: Model,
+        model: DeepSeekV2,
         tokenizer: Tokenizer,
         seed: u64,
         temp: Option<f64>,
         top_p: Option<f64>,
+        top_k: Option<usize>,
         repeat_penalty: f32,
         repeat_last_n: usize,
         device: &Device,
     ) -> Self {
-        let logits_processor = LogitsProcessor::new(seed, temp, top_p);
+        let logits_processor = {
+            let temperature = temp.unwrap_or(0.);
+            let sampling = if temperature <= 0. {
+                Sampling::ArgMax
+            } else {
+                match (top_k, top_p) {
+                    (None, None) => Sampling::All { temperature },
+                    (Some(k), None) => Sampling::TopK { k, temperature },
+                    (None, Some(p)) => Sampling::TopP { p, temperature },
+                    (Some(k), Some(p)) => Sampling::TopKThenTopP { k, p, temperature },
+                }
+            };
+            LogitsProcessor::from_sampling(seed, sampling)
+        };
+
         Self {
             model,
             tokenizer: TokenOutputStream::new(tokenizer),
@@ -120,9 +81,9 @@ impl TextGeneration {
         std::io::stdout().flush()?;
 
         let mut generated_tokens = 0usize;
-        let eos_token = match self.tokenizer.get_token("<eos>") {
+        let eos_token = match self.tokenizer.get_token("<｜end▁of▁sentence｜>") {
             Some(token) => token,
-            None => anyhow::bail!("cannot find the <eos> token"),
+            None => anyhow::bail!("cannot find the <｜end▁of▁sentence｜> token"),
         };
         let start_gen = std::time::Instant::now();
         for index in 0..sample_len {
@@ -167,6 +128,20 @@ impl TextGeneration {
     }
 }
 
+#[derive(Clone, Debug, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum Which {
+    #[value(name = "lite")]
+    Lite,
+    #[value(name = "lite-chat")]
+    LiteChat,
+    #[value(name = "coder-lite-chat")]
+    CoderLiteChat,
+    #[value(name = "v2")]
+    V2,
+    #[value(name = "v2-chat")]
+    V2Chat,
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -179,6 +154,9 @@ struct Args {
     tracing: bool,
 
     #[arg(long)]
+    use_flash_attn: bool,
+
+    #[arg(long)]
     prompt: String,
 
     /// The temperature used to generate samples.
@@ -189,6 +167,10 @@ struct Args {
     #[arg(long)]
     top_p: Option<f64>,
 
+    /// Only sample among the top K samples.
+    #[arg(long)]
+    top_k: Option<usize>,
+
     /// The seed to use when generating random samples.
     #[arg(long, default_value_t = 299792458)]
     seed: u64,
@@ -197,20 +179,15 @@ struct Args {
     #[arg(long, short = 'n', default_value_t = 10000)]
     sample_len: usize,
 
+    /// The model size to use.
+    #[arg(long, default_value = "lite")]
+    which: Which,
+
     #[arg(long)]
     model_id: Option<String>,
 
     #[arg(long, default_value = "main")]
     revision: String,
-
-    #[arg(long)]
-    tokenizer_file: Option<String>,
-
-    #[arg(long)]
-    config_file: Option<String>,
-
-    #[arg(long)]
-    weight_files: Option<String>,
 
     /// Penalty to be applied for repeating tokens, 1. means no penalty.
     #[arg(long, default_value_t = 1.1)]
@@ -219,13 +196,6 @@ struct Args {
     /// The context size to consider for the repeat penalty.
     #[arg(long, default_value_t = 64)]
     repeat_last_n: usize,
-
-    /// The model to use.
-    #[arg(long, default_value = "2-2b")]
-    which: Which,
-
-    #[arg(long)]
-    use_flash_attn: bool,
 }
 
 fn main() -> Result<()> {
@@ -233,6 +203,7 @@ fn main() -> Result<()> {
     use tracing_subscriber::prelude::*;
 
     let args = Args::parse();
+
     let _guard = if args.tracing {
         let (chrome_layer, guard) = ChromeLayerBuilder::new().build();
         tracing_subscriber::registry().with(chrome_layer).init();
@@ -256,25 +227,14 @@ fn main() -> Result<()> {
 
     let start = std::time::Instant::now();
     let api = Api::new()?;
-    let model_id = match &args.model_id {
-        Some(model_id) => model_id.to_string(),
+    let model_id = match args.model_id {
+        Some(model_id) => model_id,
         None => match args.which {
-            Which::InstructV1_1_2B => "google/gemma-1.1-2b-it".to_string(),
-            Which::InstructV1_1_7B => "google/gemma-1.1-7b-it".to_string(),
-            Which::Base2B => "google/gemma-2b".to_string(),
-            Which::Base7B => "google/gemma-7b".to_string(),
-            Which::Instruct2B => "google/gemma-2b-it".to_string(),
-            Which::Instruct7B => "google/gemma-7b-it".to_string(),
-            Which::CodeBase2B => "google/codegemma-2b".to_string(),
-            Which::CodeBase7B => "google/codegemma-7b".to_string(),
-            Which::CodeInstruct2B => "google/codegemma-2b-it".to_string(),
-            Which::CodeInstruct7B => "google/codegemma-7b-it".to_string(),
-            Which::BaseV2_2B => "google/gemma-2-2b".to_string(),
-            Which::InstructV2_2B => "google/gemma-2-2b-it".to_string(),
-            Which::BaseV2_9B => "google/gemma-2-9b".to_string(),
-            Which::InstructV2_9B => "google/gemma-2-9b-it".to_string(),
-            Which::BaseV3_1B => "google/gemma-3-1b-pt".to_string(),
-            Which::InstructV3_1B => "google/gemma-3-1b-it".to_string(),
+            Which::CoderLiteChat => "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct".to_string(),
+            Which::LiteChat => "deepseek-ai/DeepSeek-V2-Lite-Chat".to_string(),
+            Which::Lite => "deepseek-ai/DeepSeek-V2-Lite".to_string(),
+            Which::V2 => "deepseek-ai/DeepSeek-V2".to_string(),
+            Which::V2Chat => "deepseek-ai/DeepSeek-V2-Chat".to_string(),
         },
     };
     let repo = api.repo(Repo::with_revision(
@@ -282,60 +242,26 @@ fn main() -> Result<()> {
         RepoType::Model,
         args.revision,
     ));
-    let tokenizer_filename = match args.tokenizer_file {
-        Some(file) => std::path::PathBuf::from(file),
-        None => repo.get("tokenizer.json")?,
-    };
-    let config_filename = match args.config_file {
-        Some(file) => std::path::PathBuf::from(file),
-        None => repo.get("config.json")?,
-    };
-    let filenames = match args.weight_files {
-        Some(files) => files
-            .split(',')
-            .map(std::path::PathBuf::from)
-            .collect::<Vec<_>>(),
-        None => match args.which {
-            Which::BaseV3_1B | Which::InstructV3_1B => vec![repo.get("model.safetensors")?],
-            _ => candle_examples::hub_load_safetensors(&repo, "model.safetensors.index.json")?,
-        },
-    };
+    let tokenizer_filename = repo.get("tokenizer.json")?;
+    let filenames = candle_examples::hub_load_safetensors(&repo, "model.safetensors.index.json")?;
     println!("retrieved the files in {:?}", start.elapsed());
     let tokenizer = Tokenizer::from_file(tokenizer_filename).map_err(E::msg)?;
 
     let start = std::time::Instant::now();
-    let device = candle_examples::device(args.cpu)?;
-    let dtype = if device.is_cuda() {
-        DType::BF16
-    } else {
-        DType::F32
+    let config: DeepSeekV2Config = {
+        let config_file = repo.get("config.json")?;
+        serde_json::from_slice(&std::fs::read(config_file)?)?
     };
-    let vb = unsafe { VarBuilder::from_mmaped_safetensors(&filenames, dtype, &device)? };
-    let model = match args.which {
-        Which::Base2B
-        | Which::Base7B
-        | Which::Instruct2B
-        | Which::Instruct7B
-        | Which::InstructV1_1_2B
-        | Which::InstructV1_1_7B
-        | Which::CodeBase2B
-        | Which::CodeBase7B
-        | Which::CodeInstruct2B
-        | Which::CodeInstruct7B => {
-            let config: Config1 = serde_json::from_reader(std::fs::File::open(config_filename)?)?;
-            let model = Model1::new(args.use_flash_attn, &config, vb)?;
-            Model::V1(model)
-        }
-        Which::BaseV2_2B | Which::InstructV2_2B | Which::BaseV2_9B | Which::InstructV2_9B => {
-            let config: Config2 = serde_json::from_reader(std::fs::File::open(config_filename)?)?;
-            let model = Model2::new(args.use_flash_attn, &config, vb)?;
-            Model::V2(model)
-        }
-        Which::BaseV3_1B | Which::InstructV3_1B => {
-            let config: Config3 = serde_json::from_reader(std::fs::File::open(config_filename)?)?;
-            let model = Model3::new(args.use_flash_attn, &config, vb)?;
-            Model::V3(model)
-        }
+    let device = candle_examples::device(args.cpu)?;
+    let (model, device) = {
+        let dtype = if device.is_cpu() {
+            DType::F16
+        } else {
+            DType::BF16
+        };
+        let vb = unsafe { VarBuilder::from_mmaped_safetensors(&filenames, dtype, &device)? };
+        let model = DeepSeekV2::new(&config, vb)?;
+        (model, device)
     };
 
     println!("loaded the model in {:?}", start.elapsed());
@@ -346,6 +272,7 @@ fn main() -> Result<()> {
         args.seed,
         args.temperature,
         args.top_p,
+        args.top_k,
         args.repeat_penalty,
         args.repeat_last_n,
         &device,
