@@ -441,7 +441,7 @@ impl StableDiffusionConfig {
             1024
         };
 
-        println!("height, width: {} {}", height, width);
+        println!("height, width: {} {} sampler {:?}", height, width, sampler);
 
         match sampler {
             Some(sampler) => match sampler.as_str() {

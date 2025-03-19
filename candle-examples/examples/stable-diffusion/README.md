@@ -17,6 +17,12 @@ Hub](https://huggingface.co/) on the first run. There are various command line
 flags to use local files instead, run with `--help` to learn about them.
 
 ## Running some example.
+```
+cargo run --example stable-diffusion --release --features cuda,cudnn -- --prompt "bill clinton has scales on his face" --sd-version xl-inpaint --use-f16 --img2img bill-square.png --mask-path bill-square-mask.png --guidance-scale 7 --img2img-strength 0.7
+```
+```
+cargo run --example stable-diffusion --release --features cuda,cudnn,flash-attn -- --prompt "a cute baby lion sitting on a park bench" --sd-version xl-inpaint --use-f16 --use-flash-attn --img2img overture-creations-5sI6fQgYIuo_big.png --mask-path overture-creations-5sI6fQgYIuo_mask_big.png --guidance-scale 7 --num-samples 10
+```
 
 ```bash
 cargo run --example stable-diffusion --release --features=cuda,cudnn \
