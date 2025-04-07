@@ -52,6 +52,8 @@ enum Which {
     BaseV3_1B,
     #[value(name = "3-1b-it")]
     InstructV3_1B,
+    #[value(name = "3-4b-it")]
+    InstructV3_4B,
 }
 
 enum Model {
@@ -275,6 +277,7 @@ fn main() -> Result<()> {
             Which::InstructV2_9B => "google/gemma-2-9b-it".to_string(),
             Which::BaseV3_1B => "google/gemma-3-1b-pt".to_string(),
             Which::InstructV3_1B => "google/gemma-3-1b-it".to_string(),
+            Which::InstructV3_4B => "google/gemma-3-4b-it".to_string(),
         },
     };
     let repo = api.repo(Repo::with_revision(
@@ -331,7 +334,7 @@ fn main() -> Result<()> {
             let model = Model2::new(args.use_flash_attn, &config, vb)?;
             Model::V2(model)
         }
-        Which::BaseV3_1B | Which::InstructV3_1B => {
+        Which::BaseV3_1B | Which::InstructV3_1B | Which::InstructV3_4B => {
             let config: Config3 = serde_json::from_reader(std::fs::File::open(config_filename)?)?;
             let model = Model3::new(args.use_flash_attn, &config, vb)?;
             Model::V3(model)
