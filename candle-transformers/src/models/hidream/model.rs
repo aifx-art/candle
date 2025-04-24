@@ -51,7 +51,7 @@ impl Config {
 
 #[derive(Debug, Clone)]
 pub struct HiDream {
-
+    timestep_embedder: todo!() 
 }
 
 
@@ -61,8 +61,13 @@ impl HiDream {
 
     pub fn new(cfg: &Config, vb: VarBuilder) -> Result<Self> {
 
+        let inner_dim = cfg.num_attention_heads * cfg.attention_head_dim;
+
+
+
+
         Ok(Self {
-            
+            timestep_embedder:todo!()
         })
     }
 }
