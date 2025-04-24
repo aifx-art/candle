@@ -187,6 +187,7 @@ impl MlpEmbedder {
     }
 }
 
+
 impl candle::Module for MlpEmbedder {
     fn forward(&self, xs: &Tensor) -> Result<Tensor> {
         xs.apply(&self.in_layer)?.silu()?.apply(&self.out_layer)

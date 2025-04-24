@@ -49,9 +49,10 @@ impl Config {
 
 
 
+
 #[derive(Debug, Clone)]
 pub struct HiDream {
-    timestep_embedder: todo!() 
+    timestep_embedder:  
 }
 
 
