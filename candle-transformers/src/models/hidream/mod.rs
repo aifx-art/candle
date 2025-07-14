@@ -6,6 +6,51 @@
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{layer_norm, linear, Activation, LayerNorm, Linear, RmsNorm, VarBuilder};
 use std::collections::HashMap;
+use std::vec::Vec;
+
+// Import attention function from flux
+use super::flux::model::attention;
+
+// Helper function for repeat_interleave
+fn repeat_interleave(t: &Tensor, repeats: usize, dim: usize) -> Result<Tensor> {
+    let shape = t.shape().dims().to_vec();
+    let mut new_shape = shape.clone();
+    new_shape[dim] *= repeats;
+    let mut parts = Vec::with_capacity(repeats);
+    for _ in 0..repeats {
+        parts.push(t.clone());
+    }
+    Tensor::cat(&parts, dim)?.reshape(new_shape)
+}
+
+// Helper function for topk (simplified implementation)
+fn topk(tensor: &Tensor, k: usize, _dim: isize) -> Result<(Tensor, Tensor)> {
+    // This is a simplified implementation - in practice you'd want a more efficient version
+    let sorted = tensor.arg_sort_last_dim(false)?;
+    let values = tensor.gather(&sorted, D::Minus1)?;
+    let indices = sorted;
+    
+    // Take top k
+    let k_indices = indices.narrow(D::Minus1, 0, k)?;
+    let k_values = values.narrow(D::Minus1, 0, k)?;
+    
+    Ok((k_values, k_indices))
+}
+
+// Helper function for mask_where (simplified implementation)
+fn mask_where(tensor: &Tensor, mask: &Tensor, other: &Tensor) -> Result<Tensor> {
+    // Simple implementation: where mask is true, use tensor, else use other
+    let mask_f = mask.to_dtype(tensor.dtype())?;
+    let inv_mask = (1.0 - &mask_f)?;
+    (tensor * &mask_f)? + (other * &inv_mask)?
+}
+
+// Helper function for masked_fill (simplified implementation)
+fn masked_fill(tensor: &Tensor, mask: &Tensor, value: &Tensor) -> Result<Tensor> {
+    let mask_f = mask.to_dtype(tensor.dtype())?;
+    let inv_mask = (1.0 - &mask_f)?;
+    (tensor * &inv_mask)? + (value * &mask_f)?
+}
 
 // Timestep embedding function from Flux
 fn timestep_embedding(t: &Tensor, dim: usize, dtype: DType) -> Result<Tensor> {
@@ -17,11 +62,11 @@ fn timestep_embedding(t: &Tensor, dim: usize, dtype: DType) -> Result<Tensor> {
     let dev = t.device();
     let half = dim / 2;
     let t = (t * TIME_FACTOR)?;
-    let arange = Tensor::arange(0, half as u32, dev)?.to_dtype(candle::DType::F32)?;
+    let arange = Tensor::arange(0u32, half as u32, dev)?.to_dtype(DType::F32)?;
     let freqs = (arange * (-MAX_PERIOD.ln() / half as f64))?.exp()?;
     let args = t
         .unsqueeze(1)?
-        .to_dtype(candle::DType::F32)?
+        .to_dtype(DType::F32)?
         .broadcast_mul(&freqs.unsqueeze(0)?)?;
     let emb = Tensor::cat(&[args.cos()?, args.sin()?], D::Minus1)?.to_dtype(dtype)?;
     Ok(emb)
@@ -30,14 +75,13 @@ fn timestep_embedding(t: &Tensor, dim: usize, dtype: DType) -> Result<Tensor> {
 // EmbedND from Flux
 #[derive(Debug, Clone)]
 struct EmbedNd {
-    dim: usize,
     theta: usize,
     axes_dim: Vec<usize>,
 }
 
 impl EmbedNd {
-    fn new(dim: usize, theta: usize, axes_dim: Vec<usize>) -> Self {
-        Self { dim, theta, axes_dim }
+    fn new(theta: usize, axes_dim: Vec<usize>) -> Self {
+        Self { theta, axes_dim }
     }
 }
 
@@ -47,7 +91,7 @@ impl Module for EmbedNd {
         let mut emb = Vec::with_capacity(n_axes);
         for idx in 0..n_axes {
             let r = rope(
-                &ids.get_on_dim(D::Minus1, idx)?,
+                &ids.i((.., idx))?,
                 self.axes_dim[idx],
                 self.theta,
             )?;
@@ -77,7 +121,8 @@ impl Module for PatchEmbed {
     }
 }
 
-// Timesteps (sinusoidal)
+// Timesteps
+#[derive(Debug, Clone)]
 struct Timesteps {
     num_channels: usize,
     flip_sin_to_cos: bool,
@@ -92,13 +137,11 @@ impl Timesteps {
 
 impl Module for Timesteps {
     fn forward(&self, t: &Tensor) -> Result<Tensor> {
-        // Implementation of sinusoidal timestep embedding
-        // Similar to timestep_embedding, but with specific params
         timestep_embedding(t, self.num_channels, t.dtype())
     }
 }
 
-// TimestepEmbedding (MLP)
+// TimestepEmbedding
 #[derive(Debug, Clone)]
 struct TimestepEmbedding {
     embedder: Linear,
@@ -106,7 +149,7 @@ struct TimestepEmbedding {
 
 impl TimestepEmbedding {
     fn new(in_channels: usize, time_embed_dim: usize, vb: VarBuilder) -> Result<Self> {
-        let embedder = linear(in_channels, time_embed_dim, vb.pp("embedder"))?;
+        let embedder = linear(in_channels, time_embed_dim, vb.pp("timestep_embedder"))?;
         Ok(Self { embedder })
     }
 }
@@ -117,7 +160,48 @@ impl Module for TimestepEmbedding {
     }
 }
 
-// TextProjection (Linear)
+// TimestepEmbed
+#[derive(Debug, Clone)]
+struct TimestepEmbed {
+    time_proj: Timesteps,
+    timestep_embedder: TimestepEmbedding,
+}
+
+impl TimestepEmbed {
+    fn new(hidden_size: usize, frequency_embedding_size: usize, vb: VarBuilder) -> Result<Self> {
+        let time_proj = Timesteps::new(frequency_embedding_size, true, 0.0);
+        let timestep_embedder = TimestepEmbedding::new(frequency_embedding_size, hidden_size, vb.pp("timestep_embedder"))?;
+        Ok(Self { time_proj, timestep_embedder })
+    }
+}
+
+impl Module for TimestepEmbed {
+    fn forward(&self, t: &Tensor) -> Result<Tensor> {
+        let t_emb = self.time_proj.forward(t)?;
+        self.timestep_embedder.forward(&t_emb)
+    }
+}
+
+// PooledEmbed
+#[derive(Debug, Clone)]
+struct PooledEmbed {
+    pooled_embedder: TimestepEmbedding,
+}
+
+impl PooledEmbed {
+    fn new(text_emb_dim: usize, hidden_size: usize, vb: VarBuilder) -> Result<Self> {
+        let pooled_embedder = TimestepEmbedding::new(text_emb_dim, hidden_size, vb.pp("pooled_embedder"))?;
+        Ok(Self { pooled_embedder })
+    }
+}
+
+impl Module for PooledEmbed {
+    fn forward(&self, pooled_embed: &Tensor) -> Result<Tensor> {
+        self.pooled_embedder.forward(pooled_embed)
+    }
+}
+
+// TextProjection
 #[derive(Debug, Clone)]
 struct TextProjection {
     linear: Linear,
@@ -157,8 +241,7 @@ impl Module for HDFeedForwardSwiGLU {
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
         let a = self.w1.forward(x)?.silu()?;
         let b = self.w3.forward(x)?;
-        let c = (a * b)?;
-        self.w2.forward(&c)
+        (a * b)?.apply(&self.w2)
     }
 }
 
@@ -167,21 +250,18 @@ impl Module for HDFeedForwardSwiGLU {
 struct HDMoEGate {
     weight: Tensor,
     top_k: usize,
-    n_routed_experts: usize,
 }
 
 impl HDMoEGate {
     fn new(dim: usize, num_routed_experts: usize, num_activated_experts: usize, vb: VarBuilder) -> Result<Self> {
         let weight = vb.get((num_routed_experts, dim), "weight")?;
-        Ok(Self { weight, top_k: num_activated_experts, n_routed_experts })
+        Ok(Self { weight, top_k: num_activated_experts })
     }
-}
 
-impl Module for HDMoEGate {
     fn forward(&self, x: &Tensor) -> Result<(Tensor, Tensor)> {
         let logits = x.matmul(&self.weight.t()?)?;
         let scores = candle_nn::ops::softmax(&logits, D::Minus1)?;
-        scores.topk(self.top_k, D::Minus1, true, true)
+        topk(&scores, self.top_k, -1)
     }
 }
 
@@ -192,6 +272,7 @@ struct HDMOEFeedForwardSwiGLU {
     experts: Vec<HDFeedForwardSwiGLU>,
     gate: HDMoEGate,
     num_activated_experts: usize,
+    num_routed_experts: usize,
 }
 
 impl HDMOEFeedForwardSwiGLU {
@@ -208,7 +289,7 @@ impl HDMOEFeedForwardSwiGLU {
             experts.push(HDFeedForwardSwiGLU::new(dim, hidden_dim, vb.pp(&format!("experts.{}", i)))?);
         }
         let gate = HDMoEGate::new(dim, num_routed_experts, num_activated_experts, vb.pp("gate"))?;
-        Ok(Self { shared_experts, experts, gate, num_activated_experts })
+        Ok(Self { shared_experts, experts, gate, num_activated_experts, num_routed_experts })
     }
 }
 
@@ -216,17 +297,17 @@ impl Module for HDMOEFeedForwardSwiGLU {
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
         let y_shared = self.shared_experts.forward(x)?;
         let (topk_weight, topk_idx) = self.gate.forward(x)?;
-        let tk_idx_flat = topk_idx.flatten_all()?;
-        let x_repeated = x.repeat_interleave(self.num_activated_experts, D::Minus2)?;
+        let tk_idx_flat = topk_idx.flatten_all()?.to_dtype(DType::U32)?;
+        let x_repeated = repeat_interleave(x, self.num_activated_experts, 0)?;
         let mut y = Tensor::zeros(x_repeated.shape(), x.dtype(), x.device())?;
         for (i, expert) in self.experts.iter().enumerate() {
             let mask = tk_idx_flat.eq(&Tensor::new(i as u32, x.device())?)?;
-            let x_sel = x_repeated.mask_where(&mask.broadcast_as(x_repeated.shape())?, &Tensor::zeros(x_repeated.shape(), x.dtype(), x.device())?)?;
-            if x_sel.dims()[0] == 0 {
+            let x_sel = mask_where(&x_repeated, &mask.broadcast_as(x_repeated.shape())?, &Tensor::zeros(x_repeated.shape(), x.dtype(), x.device())?)?;
+            if x_sel.dim(0)? == 0 {
                 continue;
             }
             let expert_out = expert.forward(&x_sel)?;
-            y = y.masked_fill(&mask.broadcast_as(y.shape())?, &expert_out)?;
+            y = masked_fill(&y, &mask.broadcast_as(y.shape())?, &expert_out)?;
         }
         let y_reshaped = y.reshape((topk_weight.dims()[0], topk_weight.dims()[1], self.num_activated_experts, y.dims()[2]))?;
         let y_sum = topk_weight.unsqueeze(2)?.matmul(&y_reshaped)?.squeeze(2)?;
@@ -241,14 +322,14 @@ struct HDAttention {
     to_k: Linear,
     to_v: Linear,
     to_out: Linear,
-    to_q_t: Option<Linear>,
-    to_k_t: Option<Linear>,
-    to_v_t: Option<Linear>,
-    to_out_t: Option<Linear>,
+    to_q_t: Linear,
+    to_k_t: Linear,
+    to_v_t: Linear,
+    to_out_t: Linear,
     q_rms_norm: RmsNorm,
     k_rms_norm: RmsNorm,
-    q_rms_norm_t: Option<RmsNorm>,
-    k_rms_norm_t: Option<RmsNorm>,
+    q_rms_norm_t: RmsNorm,
+    k_rms_norm_t: RmsNorm,
     heads: usize,
     dim_head: usize,
     single: bool,
@@ -272,18 +353,13 @@ impl HDAttention {
         let q_rms_norm = candle_nn::rms_norm(dim_head, 1e-5, vb.pp("q_rms_norm"))?;
         let k_rms_norm = candle_nn::rms_norm(dim_head, 1e-5, vb.pp("k_rms_norm"))?;
 
-        let (to_q_t, to_k_t, to_v_t, to_out_t, q_rms_norm_t, k_rms_norm_t) = if !single {
-            (
-                Some(linear(query_dim, inner_dim, vb.pp("to_q_t"))?),
-                Some(linear(inner_dim, inner_dim, vb.pp("to_k_t"))?),
-                Some(linear(inner_dim, inner_dim, vb.pp("to_v_t"))?),
-                Some(linear(inner_dim, query_dim, vb.pp("to_out_t"))?),
-                Some(candle_nn::rms_norm(dim_head, 1e-5, vb.pp("q_rms_norm_t"))?),
-                Some(candle_nn::rms_norm(dim_head, 1e-5, vb.pp("k_rms_norm_t"))?),
-            )
-        } else {
-            (None, None, None, None, None, None)
-        };
+        let to_q_t = linear(query_dim, inner_dim, vb.pp("to_q_t"))?;
+        let to_k_t = linear(inner_dim, inner_dim, vb.pp("to_k_t"))?;
+        let to_v_t = linear(inner_dim, inner_dim, vb.pp("to_v_t"))?;
+        let to_out_t = linear(inner_dim, query_dim, vb.pp("to_out_t"))?;
+
+        let q_rms_norm_t = candle_nn::rms_norm(dim_head, 1e-5, vb.pp("q_rms_norm_t"))?;
+        let k_rms_norm_t = candle_nn::rms_norm(dim_head, 1e-5, vb.pp("k_rms_norm_t"))?;
 
         Ok(Self {
             to_q, to_k, to_v, to_out,
@@ -297,41 +373,179 @@ impl HDAttention {
 
 impl Module for HDAttention {
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        // Simplified forward - add full logic as needed
         let q = self.to_q.forward(x)?;
         let k = self.to_k.forward(x)?;
         let v = self.to_v.forward(x)?;
-        // Add reshape, norm, attention, etc.
-        // For now, placeholder
-        self.to_out.forward(&q)
+        let inner_dim = k.dim(D::Minus1)?;
+        let head_dim = inner_dim / self.heads;
+
+        let q = q.reshape((x.dim(0)?, x.dim(1)?, self.heads, head_dim))?;
+        let k = k.reshape((x.dim(0)?, x.dim(1)?, self.heads, head_dim))?;
+        let v = v.reshape((x.dim(0)?, x.dim(1)?, self.heads, head_dim))?;
+
+        let q = self.q_rms_norm.forward(&q)?;
+        let k = self.k_rms_norm.forward(&k)?;
+
+        // Add attention calculation
+        let attn = attention(&q, &k, &v, &Tensor::zeros(q.shape(), q.dtype(), q.device())?)?; // Placeholder pe
+        attn.apply(&self.to_out)
     }
 }
 
-// Continue with HDBlockDouble, HDBlockSingle, HDLastLayer, HDModel
-
-// Note: The complete implementation is extensive. This is a starting point.
-// Implement the remaining parts similarly, adapting from the Python code and Flux.
-
+// HDBlockDouble
 #[derive(Debug, Clone)]
-pub struct Config {
-    // Add fields from Python init
+struct HDBlockDouble {
+    ada_ln_modulation: Linear,
+    norm1_i: LayerNorm,
+    norm1_t: LayerNorm,
+    attn1: HDAttention,
+    norm3_i: LayerNorm,
+    ff_i: HDMOEFeedForwardSwiGLU,
+    norm3_t: LayerNorm,
+    ff_t: HDFeedForwardSwiGLU,
 }
 
+impl HDBlockDouble {
+    fn new(
+        dim: usize,
+        heads: usize,
+        head_dim: usize,
+        num_routed_experts: usize,
+        num_activated_experts: usize,
+        vb: VarBuilder,
+    ) -> Result<Self> {
+        let ada_ln_modulation = linear(dim, 12 * dim, vb.pp("adaLN_modulation"))?;
+        let norm1_i = layer_norm(dim, 1e-6, vb.pp("norm1_i"))?;
+        let norm1_t = layer_norm(dim, 1e-6, vb.pp("norm1_t"))?;
+        let attn1 = HDAttention::new(dim, heads, head_dim, false, vb.pp("attn1"))?;
+        let norm3_i = layer_norm(dim, 1e-6, vb.pp("norm3_i"))?;
+        let ff_i = HDMOEFeedForwardSwiGLU::new(dim, 4 * dim, num_routed_experts, num_activated_experts, vb.pp("ff_i"))?;
+        let norm3_t = layer_norm(dim, 1e-6, vb.pp("norm3_t"))?;
+        let ff_t = HDFeedForwardSwiGLU::new(dim, 4 * dim, vb.pp("ff_t"))?;
+        Ok(Self { ada_ln_modulation, norm1_i, norm1_t, attn1, norm3_i, ff_i, norm3_t, ff_t })
+    }
+}
+
+impl Module for HDBlockDouble {
+    fn forward(&self, x: &Tensor) -> Result<Tensor> {
+        // Implement forward logic from Python
+        todo!()
+    }
+}
+
+// HDBlockSingle
+#[derive(Debug, Clone)]
+struct HDBlockSingle {
+    ada_ln_modulation: Linear,
+    norm1_i: LayerNorm,
+    attn1: HDAttention,
+    norm3_i: LayerNorm,
+    ff_i: HDMOEFeedForwardSwiGLU,
+}
+
+impl HDBlockSingle {
+    fn new(
+        dim: usize,
+        heads: usize,
+        head_dim: usize,
+        num_routed_experts: usize,
+        num_activated_experts: usize,
+        vb: VarBuilder,
+    ) -> Result<Self> {
+        let ada_ln_modulation = linear(dim, 6 * dim, vb.pp("adaLN_modulation"))?;
+        let norm1_i = layer_norm(dim, 1e-6, vb.pp("norm1_i"))?;
+        let attn1 = HDAttention::new(dim, heads, head_dim, true, vb.pp("attn1"))?;
+        let norm3_i = layer_norm(dim, 1e-6, vb.pp("norm3_i"))?;
+        let ff_i = HDMOEFeedForwardSwiGLU::new(dim, 4 * dim, num_routed_experts, num_activated_experts, vb.pp("ff_i"))?;
+        Ok(Self { ada_ln_modulation, norm1_i, attn1, norm3_i, ff_i })
+    }
+}
+
+impl Module for HDBlockSingle {
+    fn forward(&self, x: &Tensor) -> Result<Tensor> {
+        // Implement forward logic from Python
+        todo!()
+    }
+}
+
+// Config
+#[derive(Debug, Clone)]
+pub struct Config {
+    patch_size: usize,
+    in_channels: usize,
+    out_channels: usize,
+    num_layers: usize,
+    num_single_layers: usize,
+    attention_head_dim: usize,
+    num_attention_heads: usize,
+    text_emb_dim: usize,
+    num_routed_experts: usize,
+    num_activated_experts: usize,
+    axes_dims_rope: (usize, usize),
+    max_resolution: (usize, usize),
+    llama_layers: Vec<usize>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            patch_size: 2,
+            in_channels: 64,
+            out_channels: 64,
+            num_layers: 16,
+            num_single_layers: 32,
+            attention_head_dim: 128,
+            num_attention_heads: 20,
+            text_emb_dim: 2048,
+            num_routed_experts: 4,
+            num_activated_experts: 2,
+            axes_dims_rope: (32, 32),
+            max_resolution: (128, 128),
+            llama_layers: vec![],
+        }
+    }
+}
+
+// HDModel
 #[derive(Debug, Clone)]
 pub struct HDModel {
-    // Add fields from Python
+    t_embedder: TimestepEmbed,
+    p_embedder: PooledEmbed,
+    x_embedder: PatchEmbed,
+    pe_embedder: EmbedNd,
+    double_stream_blocks: Vec<HDBlockDouble>,
+    single_stream_blocks: Vec<HDBlockSingle>,
+    final_layer: HDLastLayer,
+    caption_projection: Vec<TextProjection>,
+    max_seq: usize,
 }
 
 impl HDModel {
     pub fn new(config: &Config, vb: VarBuilder) -> Result<Self> {
-        // Implement
-        todo!()
+        let inner_dim = config.num_attention_heads * config.attention_head_dim;
+        let t_embedder = TimestepEmbed::new(inner_dim, 256, vb.pp("t_embedder"))?;
+        let p_embedder = PooledEmbed::new(config.text_emb_dim, inner_dim, vb.pp("p_embedder"))?;
+        let x_embedder = PatchEmbed::new(config.patch_size, config.in_channels, inner_dim, vb.pp("x_embedder"))?;
+        let pe_embedder = EmbedNd::new(10000, vec![config.axes_dims_rope.0, config.axes_dims_rope.1]);
+        let mut double_stream_blocks = Vec::new();
+        for _ in 0..config.num_layers {
+            double_stream_blocks.push(HDBlockDouble::new(inner_dim, config.num_attention_heads, config.attention_head_dim, config.num_routed_experts, config.num_activated_experts, vb.pp("double_stream_blocks"))?);
+        }
+        let mut single_stream_blocks = Vec::new();
+        for _ in 0..config.num_single_layers {
+            single_stream_blocks.push(HDBlockSingle::new(inner_dim, config.num_attention_heads, config.attention_head_dim, config.num_routed_experts, config.num_activated_experts, vb.pp("single_stream_blocks"))?);
+        }
+        let final_layer = HDLastLayer::new(inner_dim, config.patch_size, config.out_channels, vb.pp("final_layer"))?;
+        let mut caption_projection = Vec::new();
+        // Add caption projections as per Python
+        let max_seq = config.max_resolution.0 * config.max_resolution.1 / (config.patch_size * config.patch_size);
+        Ok(Self { t_embedder, p_embedder, x_embedder, pe_embedder, double_stream_blocks, single_stream_blocks, final_layer, caption_projection, max_seq })
     }
 }
 
 impl Module for HDModel {
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        // Implement the full forward with I1/E1 support
+        // Implement full forward from Python
         todo!()
     }
 }
@@ -347,80 +561,49 @@ struct HDLastLayer {
 impl HDLastLayer {
     fn new(hidden_size: usize, patch_size: usize, out_channels: usize, vb: VarBuilder) -> Result<Self> {
         let norm_final = layer_norm(hidden_size, 1e-6, vb.pp("norm_final"))?;
-        let linear = linear(hidden_size, patch_size * patch_size * out_channels, vb.pp("linear"))?;
+        let linear_layer = linear(hidden_size, patch_size * patch_size * out_channels, vb.pp("linear"))?;
         let ada_ln_modulation = linear(hidden_size, 2 * hidden_size, vb.pp("adaLN_modulation"))?;
-        Ok(Self { norm_final, linear, ada_ln_modulation })
+        Ok(Self { norm_final, linear: linear_layer, ada_ln_modulation })
     }
 }
 
-impl Module for HDLastLayer {
-    fn forward(&self, x: &Tensor, vec: &Tensor) -> Result<Tensor> {
-        let chunks = vec.silu()?.apply(&self.ada_ln_modulation)?.chunk(2, 1)?;
-        let (shift, scale) = (&chunks[0], &chunks[1]);
+impl HDLastLayer {
+    fn forward_with_vec(&self, x: &Tensor, vec: &Tensor) -> Result<Tensor> {
+        let chunks = vec.silu()?.apply(&self.ada_ln_modulation)?.chunk(2, D::Minus1)?;
+        let (shift, scale) = (chunks[0].unsqueeze(1)?, chunks[1].unsqueeze(1)?);
         let x = x
             .apply(&self.norm_final)?
-            .broadcast_mul(&(scale.unsqueeze(1)? + 1.0)?)?
-            .broadcast_add(&shift.unsqueeze(1)?)?;
+            .broadcast_mul(&(scale + 1.0)?)?
+            .broadcast_add(&shift)?;
         x.apply(&self.linear)
     }
 }
 
-// Add rope and attention functions from Flux
+impl Module for HDLastLayer {
+    fn forward(&self, x: &Tensor) -> Result<Tensor> {
+        // This is a placeholder - the actual forward needs vec parameter
+        // Should be called via forward_with_vec
+        candle::bail!("HDLastLayer requires vec parameter, use forward_with_vec instead")
+    }
+}
+
+// Rope and attention from Flux
 fn rope(pos: &Tensor, dim: usize, theta: usize) -> Result<Tensor> {
-    // Same as flux
     if dim % 2 == 1 {
         candle::bail!("dim {dim} is odd")
     }
     let dev = pos.device();
     let theta = theta as f64;
-    let inv_freq: Vec<_> = (0..dim)
+    let inv_freq: Vec<f32> = (0..dim)
         .step_by(2)
-        .map(|i| 1f32 / theta.powf(i as f64 / dim as f64) as f32)
+        .map(|i| 1.0 / theta.powf(i as f64 / dim as f64) as f32)
         .collect();
     let inv_freq_len = inv_freq.len();
-    let inv_freq = Tensor::from_vec(inv_freq, (1, 1, inv_freq_len), dev)?;
-    let inv_freq = inv_freq.to_dtype(pos.dtype())?;
-    let freqs = pos.unsqueeze(2)?.broadcast_mul(&inv_freq)?;
+    let inv_freq = Tensor::from_vec(inv_freq, (1, inv_freq_len), dev)?.to_dtype(pos.dtype())?;
+    let freqs = pos.unsqueeze(1)?.broadcast_mul(&inv_freq)?;
     let cos = freqs.cos()?;
     let sin = freqs.sin()?;
-    let out = Tensor::stack(&[&cos, &sin.neg()?, &sin, &cos], 3)?;
-    let (b, n, d, _ij) = out.dims4()?;
-    out.reshape((b, n, d, 2, 2))
+    Tensor::cat(&[cos, sin], D::Minus1)
 }
 
-fn apply_rope(x: &Tensor, freq_cis: &Tensor) -> Result<Tensor> {
-    let dims = x.dims();
-    let (b_sz, n_head, seq_len, n_embd) = x.dims4()?;
-    let x = x.reshape((b_sz, n_head, seq_len, n_embd / 2, 2))?;
-    let x0 = x.narrow(D::Minus1, 0, 1)?;
-    let x1 = x.narrow(D::Minus1, 1, 1)?;
-    let fr0 = freq_cis.get_on_dim(D::Minus1, 0)?;
-    let fr1 = freq_cis.get_on_dim(D::Minus1, 1)?;
-    (fr0.broadcast_mul(&x0)? + fr1.broadcast_mul(&x1)?)?.reshape(dims.to_vec())
-}
-
-fn attention(q: &Tensor, k: &Tensor, v: &Tensor, pe: &Tensor) -> Result<Tensor> {
-    let q = apply_rope(q, pe)?.contiguous()?;
-    let k = apply_rope(k, pe)?.contiguous()?;
-    let x = scaled_dot_product_attention(&q, &k, v)?;
-    x.transpose(1, 2)?.flatten_from(2)
-}
-
-fn scaled_dot_product_attention(q: &Tensor, k: &Tensor, v: &Tensor) -> Result<Tensor> {
-    let dim = q.dim(D::Minus1)?;
-    let scale_factor = 1.0 / (dim as f64).sqrt();
-    let mut batch_dims = q.dims().to_vec();
-    batch_dims.pop();
-    batch_dims.pop();
-    let q = q.flatten_to(batch_dims.len() - 1)?;
-    let k = k.flatten_to(batch_dims.len() - 1)?;
-    let v = v.flatten_to(batch_dims.len() - 1)?;
-    let attn_weights = (q.matmul(&k.t()?)? * scale_factor)?;
-    let attn_scores = candle_nn::ops::softmax_last_dim(&attn_weights)?.matmul(&v)?;
-    batch_dims.push(attn_scores.dim(D::Minus2)?);
-    batch_dims.push(attn_scores.dim(D::Minus1)?);
-    attn_scores.reshape(batch_dims)
-}
-
-// TODO: Complete the implementation for all structs and the main model forward logic.
-// For now, this provides the structure based on the Python reference and Flux.
+// Add other functions as needed.
