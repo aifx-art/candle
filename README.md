@@ -6,7 +6,19 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)](https://github.com/huggingface/candle/blob/main/LICENSE-APACHE)
 
 Candle is a minimalist ML framework for Rust with a focus on performance (including GPU support) 
-and ease of use. Try our online demos: 
+and ease of use.
+
+## TODO
+
+## Doing
+
+## Done
+- [x] Update HiDream example to use Comfy-Org/HiDream-I1_ComfyUI repository
+- [x] Set fp8 version as default model
+- [x] Update model variants to include new repository options
+- [x] Modify download logic to use new repository structure
+
+Try our online demos:
 [whisper](https://huggingface.co/spaces/lmz/candle-whisper),
 [LLaMA2](https://huggingface.co/spaces/lmz/candle-llama2),
 [T5](https://huggingface.co/spaces/radames/Candle-T5-Generation-Wasm),

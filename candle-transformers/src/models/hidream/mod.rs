@@ -3,6 +3,8 @@
 //! This module implements the HiDream model in Candle, supporting both HiDream-I1 (generation) and HiDream-E1 (editing).
 //! Based on the provided Python reference and Flux implementation.
 
+pub mod schedulers;
+
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{layer_norm, linear, Activation, LayerNorm, Linear, RmsNorm, VarBuilder};
 use std::collections::HashMap;
@@ -97,7 +99,7 @@ impl Module for EmbedNd {
             )?;
             emb.push(r);
         }
-        let emb = Tensor::cat(&emb, 2)?;
+        let emb = Tensor::cat(&emb, D::Minus1)?;
         emb.unsqueeze(1)
     }
 }
@@ -369,26 +371,82 @@ impl HDAttention {
             heads, dim_head, single,
         })
     }
-}
 
-impl Module for HDAttention {
-    fn forward(&self, x: &Tensor) -> Result<Tensor> {
+    fn forward_dual(&self, img: &Tensor, txt: &Tensor, pe: &Tensor) -> Result<(Tensor, Tensor)> {
+        // Image stream
+        let q_i = self.to_q.forward(img)?;
+        let k_i = self.to_k.forward(img)?;
+        let v_i = self.to_v.forward(img)?;
+
+        // Text stream  
+        let q_t = self.to_q_t.forward(txt)?;
+        let k_t = self.to_k_t.forward(txt)?;
+        let v_t = self.to_v_t.forward(txt)?;
+
+        // Reshape for multi-head attention
+        let (b, seq_i, _) = img.dims3()?;
+        let (_, seq_t, _) = txt.dims3()?;
+        
+        let q_i = q_i.reshape((b, seq_i, self.heads, self.dim_head))?;
+        let k_i = k_i.reshape((b, seq_i, self.heads, self.dim_head))?;
+        let v_i = v_i.reshape((b, seq_i, self.heads, self.dim_head))?;
+        
+        let q_t = q_t.reshape((b, seq_t, self.heads, self.dim_head))?;
+        let k_t = k_t.reshape((b, seq_t, self.heads, self.dim_head))?;
+        let v_t = v_t.reshape((b, seq_t, self.heads, self.dim_head))?;
+
+        // Apply RMS norm
+        let q_i = self.q_rms_norm.forward(&q_i)?;
+        let k_i = self.k_rms_norm.forward(&k_i)?;
+        let q_t = self.q_rms_norm_t.forward(&q_t)?;
+        let k_t = self.k_rms_norm_t.forward(&k_t)?;
+
+        // Concatenate for joint attention
+        let q = Tensor::cat(&[q_i, q_t], 1)?;
+        let k = Tensor::cat(&[k_i, k_t], 1)?;
+        let v = Tensor::cat(&[v_i, v_t], 1)?;
+
+        // Apply attention with positional encoding
+        let attn_out = attention(&q, &k, &v, pe)?;
+        
+        // Split back to image and text streams
+        let img_out = attn_out.narrow(1, 0, seq_i)?;
+        let txt_out = attn_out.narrow(1, seq_i, seq_t)?;
+
+        // Apply output projections
+        let img_out = img_out.reshape((b, seq_i, self.heads * self.dim_head))?;
+        let txt_out = txt_out.reshape((b, seq_t, self.heads * self.dim_head))?;
+        
+        let img_out = self.to_out.forward(&img_out)?;
+        let txt_out = self.to_out_t.forward(&txt_out)?;
+
+        Ok((img_out, txt_out))
+    }
+
+    fn forward_single(&self, x: &Tensor, pe: &Tensor) -> Result<Tensor> {
         let q = self.to_q.forward(x)?;
         let k = self.to_k.forward(x)?;
         let v = self.to_v.forward(x)?;
-        let inner_dim = k.dim(D::Minus1)?;
-        let head_dim = inner_dim / self.heads;
-
-        let q = q.reshape((x.dim(0)?, x.dim(1)?, self.heads, head_dim))?;
-        let k = k.reshape((x.dim(0)?, x.dim(1)?, self.heads, head_dim))?;
-        let v = v.reshape((x.dim(0)?, x.dim(1)?, self.heads, head_dim))?;
+        
+        let (b, seq, _) = x.dims3()?;
+        let q = q.reshape((b, seq, self.heads, self.dim_head))?;
+        let k = k.reshape((b, seq, self.heads, self.dim_head))?;
+        let v = v.reshape((b, seq, self.heads, self.dim_head))?;
 
         let q = self.q_rms_norm.forward(&q)?;
         let k = self.k_rms_norm.forward(&k)?;
 
-        // Add attention calculation
-        let attn = attention(&q, &k, &v, &Tensor::zeros(q.shape(), q.dtype(), q.device())?)?; // Placeholder pe
-        attn.apply(&self.to_out)
+        let attn_out = attention(&q, &k, &v, pe)?;
+        let attn_out = attn_out.reshape((b, seq, self.heads * self.dim_head))?;
+        self.to_out.forward(&attn_out)
+    }
+}
+
+impl Module for HDAttention {
+    fn forward(&self, x: &Tensor) -> Result<Tensor> {
+        // Default single stream forward
+        let pe = Tensor::zeros((x.dim(0)?, x.dim(1)?, self.heads, self.dim_head), x.dtype(), x.device())?;
+        self.forward_single(x, &pe)
     }
 }
 
@@ -426,10 +484,54 @@ impl HDBlockDouble {
     }
 }
 
+impl HDBlockDouble {
+    fn forward_dual(&self, img: &Tensor, txt: &Tensor, vec: &Tensor, pe: &Tensor) -> Result<(Tensor, Tensor)> {
+        // AdaLN modulation
+        let modulation = vec.silu()?.apply(&self.ada_ln_modulation)?;
+        let chunks = modulation.chunk(12, D::Minus1)?;
+        
+        let (shift_msa_i, scale_msa_i, gate_msa_i) = (&chunks[0], &chunks[1], &chunks[2]);
+        let (shift_msa_t, scale_msa_t, gate_msa_t) = (&chunks[3], &chunks[4], &chunks[5]);
+        let (shift_mlp_i, scale_mlp_i, gate_mlp_i) = (&chunks[6], &chunks[7], &chunks[8]);
+        let (shift_mlp_t, scale_mlp_t, gate_mlp_t) = (&chunks[9], &chunks[10], &chunks[11]);
+
+        // Attention block
+        let norm_img = self.norm1_i.forward(img)?;
+        let norm_txt = self.norm1_t.forward(txt)?;
+        
+        let norm_img = norm_img.broadcast_mul(&(scale_msa_i.unsqueeze(1)? + 1.0)?)?
+            .broadcast_add(&shift_msa_i.unsqueeze(1)?)?;
+        let norm_txt = norm_txt.broadcast_mul(&(scale_msa_t.unsqueeze(1)? + 1.0)?)?
+            .broadcast_add(&shift_msa_t.unsqueeze(1)?)?;
+
+        let (attn_img, attn_txt) = self.attn1.forward_dual(&norm_img, &norm_txt, pe)?;
+        
+        let img = (img + gate_msa_i.unsqueeze(1)?.broadcast_mul(&attn_img)?)?;
+        let txt = (txt + gate_msa_t.unsqueeze(1)?.broadcast_mul(&attn_txt)?)?;
+
+        // Feed forward block
+        let norm_img = self.norm3_i.forward(&img)?;
+        let norm_txt = self.norm3_t.forward(&txt)?;
+        
+        let norm_img = norm_img.broadcast_mul(&(scale_mlp_i.unsqueeze(1)? + 1.0)?)?
+            .broadcast_add(&shift_mlp_i.unsqueeze(1)?)?;
+        let norm_txt = norm_txt.broadcast_mul(&(scale_mlp_t.unsqueeze(1)? + 1.0)?)?
+            .broadcast_add(&shift_mlp_t.unsqueeze(1)?)?;
+
+        let ff_img = self.ff_i.forward(&norm_img)?;
+        let ff_txt = self.ff_t.forward(&norm_txt)?;
+        
+        let img = (img + gate_mlp_i.unsqueeze(1)?.broadcast_mul(&ff_img)?)?;
+        let txt = (txt + gate_mlp_t.unsqueeze(1)?.broadcast_mul(&ff_txt)?)?;
+
+        Ok((img, txt))
+    }
+}
+
 impl Module for HDBlockDouble {
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        // Implement forward logic from Python
-        todo!()
+        // This is a placeholder - the actual forward needs dual inputs
+        candle::bail!("HDBlockDouble requires dual inputs, use forward_dual instead")
     }
 }
 
@@ -461,10 +563,39 @@ impl HDBlockSingle {
     }
 }
 
+impl HDBlockSingle {
+    fn forward_with_vec(&self, x: &Tensor, vec: &Tensor, pe: &Tensor) -> Result<Tensor> {
+        // AdaLN modulation
+        let modulation = vec.silu()?.apply(&self.ada_ln_modulation)?;
+        let chunks = modulation.chunk(6, D::Minus1)?;
+        
+        let (shift_msa, scale_msa, gate_msa) = (&chunks[0], &chunks[1], &chunks[2]);
+        let (shift_mlp, scale_mlp, gate_mlp) = (&chunks[3], &chunks[4], &chunks[5]);
+
+        // Attention block
+        let norm_x = self.norm1_i.forward(x)?;
+        let norm_x = norm_x.broadcast_mul(&(scale_msa.unsqueeze(1)? + 1.0)?)?
+            .broadcast_add(&shift_msa.unsqueeze(1)?)?;
+
+        let attn_out = self.attn1.forward_single(&norm_x, pe)?;
+        let x = (x + gate_msa.unsqueeze(1)?.broadcast_mul(&attn_out)?)?;
+
+        // Feed forward block
+        let norm_x = self.norm3_i.forward(&x)?;
+        let norm_x = norm_x.broadcast_mul(&(scale_mlp.unsqueeze(1)? + 1.0)?)?
+            .broadcast_add(&shift_mlp.unsqueeze(1)?)?;
+
+        let ff_out = self.ff_i.forward(&norm_x)?;
+        let x = (x + gate_mlp.unsqueeze(1)?.broadcast_mul(&ff_out)?)?;
+
+        Ok(x)
+    }
+}
+
 impl Module for HDBlockSingle {
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        // Implement forward logic from Python
-        todo!()
+        // This is a placeholder - the actual forward needs vec parameter
+        candle::bail!("HDBlockSingle requires vec parameter, use forward_with_vec instead")
     }
 }
 
@@ -543,10 +674,98 @@ impl HDModel {
     }
 }
 
+impl HDModel {
+    pub fn forward_with_cfg(
+        &self,
+        hidden_states: &Tensor,
+        timesteps: &Tensor,
+        encoder_hidden_states: &[Tensor], // [t5_embeds, llama_embeds]
+        pooled_embeds: &Tensor,
+        img_sizes: Option<&Tensor>,
+        img_ids: Option<&Tensor>,
+    ) -> Result<Tensor> {
+        let (batch_size, seq_len, _) = hidden_states.dims3()?;
+        
+        // Store original sequence length for later use
+        let img_seq_len = seq_len;
+        
+        // Embed patches
+        let embedded_states = self.x_embedder.forward(hidden_states)?;
+        
+        // Timestep embedding
+        let timestep_emb = self.t_embedder.forward(timesteps)?;
+        
+        // Pooled embedding
+        let pooled_emb = self.p_embedder.forward(pooled_embeds)?;
+        
+        // Combine timestep and pooled embeddings
+        let vec = (timestep_emb + pooled_emb)?;
+        
+        // Positional encoding
+        let pe = if let Some(ids) = img_ids {
+            self.pe_embedder.forward(ids)?
+        } else {
+            // Default positional encoding for square images
+            let h = (seq_len as f64).sqrt() as usize;
+            let w = h;
+            let mut ids = Vec::new();
+            for i in 0..h {
+                for j in 0..w {
+                    ids.push([0.0, i as f32, j as f32]);
+                }
+            }
+            let ids_tensor = Tensor::from_vec(
+                ids.into_iter().flatten().collect::<Vec<f32>>(),
+                (1, seq_len, 3),
+                embedded_states.device(),
+            )?;
+            self.pe_embedder.forward(&ids_tensor)?
+        };
+        
+        // Process text embeddings
+        let t5_embeds = &encoder_hidden_states[0];
+        let llama_embeds = if encoder_hidden_states.len() > 1 {
+            &encoder_hidden_states[1]
+        } else {
+            t5_embeds // Fallback if llama embeds not provided
+        };
+        
+        // Project text embeddings if needed
+        let txt = t5_embeds.clone(); // Use T5 embeddings as primary text
+        
+        let mut img = embedded_states;
+        let mut txt = txt;
+        
+        // Double stream blocks
+        for block in &self.double_stream_blocks {
+            let (new_img, new_txt) = block.forward_dual(&img, &txt, &vec, &pe)?;
+            img = new_img;
+            txt = new_txt;
+        }
+        
+        // Concatenate for single stream
+        let combined = Tensor::cat(&[img, txt], 1)?;
+        let mut x = combined;
+        
+        // Single stream blocks
+        for block in &self.single_stream_blocks {
+            x = block.forward_with_vec(&x, &vec, &pe)?;
+        }
+        
+        // Extract image part for final layer
+        let final_img = x.narrow(1, 0, img_seq_len)?;
+        
+        // Final layer
+        let output = self.final_layer.forward_with_vec(&final_img, &vec)?;
+        
+        Ok(output)
+    }
+}
+
 impl Module for HDModel {
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        // Implement full forward from Python
-        todo!()
+        // This is a placeholder - the actual forward needs more parameters
+        candle::bail!("HDModel requires additional parameters, use forward_with_cfg instead")
     }
 }
 
