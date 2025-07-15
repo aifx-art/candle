@@ -372,8 +372,10 @@ fn run(args: Args) -> Result<()> {
 
     // Decode latents to image (placeholder)
     // In a real implementation, you'd load and use the VAE decoder
-    let img =
-        ((current_latents.clamp(-1f32, 1f32)? + 1.0)? * 127.5)?.to_dtype(candle::DType::U8)?;
+    let img = current_latents.clamp(-1f32, 1f32)?;
+    let img = (img + 1.0)?;
+    let img = (img * 127.5)?;
+    let img = img.to_dtype(candle::DType::U8)?;
 
     // Save image
     candle_examples::save_image(&img.i(0)?, &args.output)?;
