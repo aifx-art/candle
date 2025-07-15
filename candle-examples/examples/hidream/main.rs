@@ -4,7 +4,7 @@ extern crate accelerate_src;
 #[cfg(feature = "mkl")]
 extern crate intel_mkl_src;
 
-use candle_transformers::models::{clip, hidream, t5};
+use candle_transformers::models::{clip, hidream, t5, flux};
 
 use anyhow::{Error as E, Result};
 use candle::{IndexOp, Module, Tensor, D};
@@ -314,67 +314,143 @@ fn run(args: Args) -> Result<()> {
 
     println!("Text embeddings encoded successfully");
 
+    // Load Flux VAE for proper image encoding/decoding
+    println!("Loading Flux VAE...");
+    let vae_repo = api.repo(hf_hub::Repo::model("black-forest-labs/FLUX.1-dev".to_string()));
+    let vae_file = vae_repo.get("ae.safetensors")?;
+    let vae_vb = unsafe { VarBuilder::from_mmaped_safetensors(&[vae_file], dtype, &device)? };
+    let vae_config = flux::autoencoder::Config::dev();
+    let vae = flux::autoencoder::AutoEncoder::new(&vae_config, vae_vb)?;
+    println!("VAE loaded successfully");
+
     // Load HiDream model from the new Comfy-Org repository structure
-    // These models are single files, not split
     println!("Loading model file: {}", args.model.model_filename());
     let model_file = repo.get(args.model.model_filename())?;
     
     let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[model_file], dtype, &device)? };
 
-    // Debug: Print available tensor names to understand the structure
-    println!("Inspecting model structure...");
+    // Create HiDream model config based on the variant
+    let config = hidream::Config {
+        patch_size: 2,
+        in_channels: 64,
+        out_channels: 64,
+        num_layers: 16,
+        num_single_layers: 32,
+        attention_head_dim: 128,
+        num_attention_heads: 20,
+        text_emb_dim: 2048,
+        num_routed_experts: 4,
+        num_activated_experts: 2,
+        axes_dims_rope: (32, 32),
+        max_resolution: (128, 128),
+        llama_layers: (0..48).collect(), // All LLaMA layers
+    };
     
-    // Try to load the model with a more flexible approach
-    // For now, we'll create a placeholder that shows what tensors are available
-    println!("Model file loaded, but HiDream implementation is incomplete.");
-    println!("Available tensor structure needs to be analyzed.");
-    
-    // Create a basic config for testing
-    let config = hidream::Config::default();
-    
-    // Instead of trying to load the full model, let's just inspect what's available
-    println!("Model config created: {:?}", config);
+    // Load the HiDream model
+    println!("Loading HiDream model...");
+    let model = hidream::HDModel::new(&config, vb)?;
+    println!("HiDream model loaded successfully");
 
-    // Prepare latents
-    let latent_height = args.height / 8; // VAE scale factor
-    let latent_width = args.width / 8;
-    let latents = Tensor::randn(0f32, 1f32, (1, 64, latent_height, latent_width), &device)?
+    // Prepare latents using VAE scale factor
+    let vae_scale_factor = 8;
+    let latent_height = args.height / vae_scale_factor / 2; // Additional /2 for patch packing
+    let latent_width = args.width / vae_scale_factor / 2;
+    let mut latents = Tensor::randn(0f32, 1f32, (1, 64, latent_height, latent_width), &device)?
         .to_dtype(dtype)?;
 
-    println!("Starting generation...");
+    println!("Starting generation with {} steps...", args.num_inference_steps.unwrap_or(args.model.default_steps()));
 
-    // Generation loop (simplified)
-    let num_steps = args
-        .num_inference_steps
-        .unwrap_or(args.model.default_steps());
-    let guidance_scale = args
-        .guidance_scale
-        .unwrap_or(args.model.default_guidance_scale());
+    // Initialize scheduler
+    let num_steps = args.num_inference_steps.unwrap_or(args.model.default_steps());
+    let guidance_scale = args.guidance_scale.unwrap_or(args.model.default_guidance_scale());
+    
+    let mut scheduler = hidream::schedulers::FlowMatchEulerDiscreteScheduler::new(
+        1000, // num_train_timesteps
+        3.0,  // shift
+        false // use_dynamic_shifting
+    );
+    scheduler.set_timesteps(num_steps, &device)?;
+    let timesteps = scheduler.get_timesteps(&device, dtype)?;
 
-    // This is a placeholder for the actual generation loop
-    // In a real implementation, you'd implement the denoising process here
-    let mut current_latents = latents;
+    // Encode input image if provided (for editing models)
+    let input_latents = if let Some(input_img) = input_image {
+        println!("Encoding input image...");
+        let encoded = vae.encode(&input_img)?;
+        Some(encoded)
+    } else {
+        None
+    };
 
-    for step in 0..num_steps {
-        println!("Step {}/{}", step + 1, num_steps);
+    // Generation loop with actual model forward passes
+    for (step, timestep) in timesteps.to_vec1::<f32>()?.iter().enumerate() {
+        println!("Step {}/{} (timestep: {:.2})", step + 1, num_steps, timestep);
 
-        // Placeholder: In real implementation, you'd:
-        // 1. Add noise based on timestep
-        // 2. Run model forward pass
-        // 3. Apply guidance
-        // 4. Update latents
+        let timestep_tensor = Tensor::new(&[*timestep], &device)?.to_dtype(dtype)?;
+        
+        // Prepare model inputs
+        let latent_model_input = if guidance_scale > 1.0 {
+            // Classifier-free guidance: duplicate latents
+            Tensor::cat(&[&latents, &latents], 0)?
+        } else {
+            latents.clone()
+        };
 
-        // For now, just pass through
-        // current_latents = model.forward(&current_latents)?;
+        // Prepare text embeddings for CFG
+        let (encoder_hidden_states, pooled_embeds) = if guidance_scale > 1.0 {
+            let t5_combined = Tensor::cat(&[&neg_pooled_emb, &t5_emb], 0)?;
+            let llama_combined = Tensor::cat(&[&llama_emb, &llama_emb], 0)?;
+            let pooled_combined = Tensor::cat(&[&neg_pooled_emb, &pooled_emb], 0)?;
+            (vec![t5_combined, llama_combined], pooled_combined)
+        } else {
+            (vec![t5_emb.clone(), llama_emb.clone()], pooled_emb.clone())
+        };
+
+        // Concatenate input image latents for editing models
+        let model_input = if let Some(ref input_lats) = input_latents {
+            Tensor::cat(&[&latent_model_input, input_lats], D::Minus1)?
+        } else {
+            latent_model_input
+        };
+
+        // Forward pass through the model
+        let noise_pred = model.forward_with_cfg(
+            &model_input,
+            &timestep_tensor,
+            &encoder_hidden_states,
+            &pooled_embeds,
+            None, // img_sizes
+            None, // img_ids
+        )?;
+
+        // Apply classifier-free guidance
+        let noise_pred = if guidance_scale > 1.0 {
+            let chunks = noise_pred.chunk(2, 0)?;
+            let noise_pred_uncond = &chunks[0];
+            let noise_pred_text = &chunks[1];
+            let guidance_tensor = Tensor::new(&[guidance_scale as f32], &device)?.to_dtype(dtype)?;
+            let guidance_tensor = guidance_tensor.broadcast_as(noise_pred_text.shape())?;
+            
+            (noise_pred_uncond + &((noise_pred_text - noise_pred_uncond)? * &guidance_tensor)?)?
+        } else {
+            noise_pred
+        };
+
+        // Scheduler step
+        latents = scheduler.step(&noise_pred, *timestep as f64, &latents)?;
     }
 
-    println!("Generation completed");
+    println!("Generation completed, decoding latents...");
 
-    // Decode latents to image (placeholder)
-    // In a real implementation, you'd load and use the VAE decoder
-    let img = current_latents.clamp(-1f32, 1f32)?;
-    let img = (img + 1.0)?;
-    let img = (img * 127.5)?;
+    // Decode latents to image using VAE
+    let vae_scale_factor = 0.3611; // Flux VAE scale factor
+    let vae_shift_factor = 0.1159; // Flux VAE shift factor
+    
+    let scaled_latents = ((&latents / vae_scale_factor)? + vae_shift_factor)?;
+    let decoded_image = vae.decode(&scaled_latents)?;
+    
+    // Post-process image
+    let img = decoded_image.clamp(-1f32, 1f32)?;
+    let img = ((&img + 1.0)? * 127.5)?;
     let img = img.to_dtype(candle::DType::U8)?;
 
     // Save image

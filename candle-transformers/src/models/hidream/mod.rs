@@ -602,19 +602,19 @@ impl Module for HDBlockSingle {
 // Config
 #[derive(Debug, Clone)]
 pub struct Config {
-    patch_size: usize,
-    in_channels: usize,
-    out_channels: usize,
-    num_layers: usize,
-    num_single_layers: usize,
-    attention_head_dim: usize,
-    num_attention_heads: usize,
-    text_emb_dim: usize,
-    num_routed_experts: usize,
-    num_activated_experts: usize,
-    axes_dims_rope: (usize, usize),
-    max_resolution: (usize, usize),
-    llama_layers: Vec<usize>,
+    pub patch_size: usize,
+    pub in_channels: usize,
+    pub out_channels: usize,
+    pub num_layers: usize,
+    pub num_single_layers: usize,
+    pub attention_head_dim: usize,
+    pub num_attention_heads: usize,
+    pub text_emb_dim: usize,
+    pub num_routed_experts: usize,
+    pub num_activated_experts: usize,
+    pub axes_dims_rope: (usize, usize),
+    pub max_resolution: (usize, usize),
+    pub llama_layers: Vec<usize>,
 }
 
 impl Default for Config {

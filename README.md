@@ -1,73 +1,62 @@
-# Candle
+# HiDream Implementation TODO List
 
-Candle is a minimalist ML framework for Rust with a focus on performance (including GPU support) and ease of use.
+## Current Issues and Fixes Needed
 
-## HiDream Implementation Status
+### 1. No Actual VAE Usage ✅
+- ✅ Load Flux VAE from huggingface 
+- ✅ Implement proper encode/decode functions
+- ✅ Add VAE scale_factor and shift_factor usage
 
-### Current Status
-The HiDream implementation is partially complete but missing key components for actual image generation.
+### 2. Missing Model Forward Calls ❌
+- The generation loop is just a placeholder with no actual model inference
+- Need to implement proper denoising process with scheduler
+- Missing actual HDModel.forward() calls during generation steps
 
-### Todos
+### 3. Incomplete Model Loading ❌
+- The safetensors file is loaded but weights aren't actually used to create the model
+- Need to parse the tensor structure and load weights into HDModel
+- Missing proper model instantiation
 
-#### Doing
-- Fix tensor operation errors in main.rs
-- Implement proper VAE loading and usage
+### 4. Text Encoder Issues ❌
+- LLaMA embeddings are just zero tensors (placeholder)
+- Need to load actual LLaMA model for proper text encoding
+- Missing text projection layers
 
-#### Todo
-- [ ] **Load and use actual Flux VAE for encoding/decoding**
-  - Need to load VAE model from huggingface
-  - Implement proper encode/decode functions
-  - Use VAE scale_factor and shift_factor correctly
+### 5. Missing Scheduler Implementation ✅
+- ✅ Implement FlowMatch scheduler
+- ✅ Add UniPC scheduler support  
+- ✅ Implement proper timestep calculation and noise scheduling
 
-- [ ] **Implement actual HiDream model loading**
-  - Parse safetensors file structure
-  - Load model weights into HDModel struct
-  - Handle different model variants (I1-Full, I1-Dev, I1-Fast, E1)
+## Implementation Plan
 
-- [ ] **Implement proper denoising loop**
-  - Load scheduler (FlowMatch or UniPC)
-  - Implement timestep scheduling
-  - Add actual model forward calls in generation loop
-  - Apply classifier-free guidance correctly
+### Phase 1: VAE Integration 🔄
+- [ ] Load Flux VAE from huggingface
+- [ ] Implement proper encode/decode functions
+- [ ] Add VAE scale_factor and shift_factor usage
+- [ ] Replace placeholder image processing
 
-- [ ] **Fix text encoder implementations**
-  - Load proper LLaMA model for text encoding
-  - Implement correct text projection layers
-  - Handle multiple text encoders (T5, CLIP, LLaMA)
+### Phase 2: Model Loading and Forward Pass 🔄
+- [ ] Implement proper HDModel instantiation from safetensors
+- [ ] Add weight loading and parsing
+- [ ] Implement actual forward pass in generation loop
+- [ ] Add proper model inference calls
 
-- [ ] **Add proper image preprocessing**
-  - Implement correct image resizing and normalization
-  - Handle different input resolutions
-  - Add proper VAE encoding for input images
+### Phase 3: Text Encoders 🔄
+- [ ] Implement proper LLaMA text encoding
+- [ ] Add text projection layers
+- [ ] Fix CLIP and T5 embedding integration
 
-- [ ] **Implement model forward pass**
-  - Connect all embeddings to model input
-  - Implement proper attention masking
-  - Handle dual-stream and single-stream blocks
+### Phase 4: Scheduler Implementation 🔄
+- [ ] Implement FlowMatch scheduler
+- [ ] Add UniPC scheduler support
+- [ ] Implement proper timestep calculation
+- [ ] Add noise scheduling
 
-- [ ] **Add scheduler implementations**
-  - FlowMatchEulerDiscreteScheduler
-  - UniPCMultistepScheduler
-  - Proper timestep calculation
+### Phase 5: Integration and Testing 🔄
+- [ ] Integrate all components
+- [ ] Test generation pipeline
+- [ ] Verify output quality
+- [ ] Performance optimization
 
-### Done
-- [x] Basic project structure
-- [x] Command line argument parsing
-- [x] Text embedding placeholders (T5, CLIP)
-- [x] Model config structure
-- [x] Basic tensor operations fixed
-
-### Issues Found
-1. **No actual VAE usage** - Currently using placeholder image processing
-2. **Missing model forward calls** - Generation loop is just a placeholder
-3. **Incomplete text encoders** - LLaMA embeddings are just zeros
-4. **No scheduler implementation** - Missing denoising process
-5. **Tensor operation errors** - Fixed basic arithmetic operations
-
-### Reference Files
-- `candle-examples/examples/hidream/main.rs` - Main implementation
-- `candle-transformers/src/models/hidream/mod.rs` - Model definitions
-- `candle-examples/examples/hidream/reference/` - Python reference implementations
-- `candle-transformers/src/models/flux/autoencoder.rs` - VAE reference
-
-The implementation needs significant work to match the Python reference and actually generate images.
+## Current Status: DOING
+Working on Phase 1: VAE Integration and Phase 2: Model Loading
