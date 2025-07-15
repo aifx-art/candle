@@ -146,19 +146,19 @@ impl Module for Timesteps {
 // TimestepEmbedding
 #[derive(Debug, Clone)]
 struct TimestepEmbedding {
-    embedder: Linear,
+    timestep_embedder: Linear,
 }
 
 impl TimestepEmbedding {
     fn new(in_channels: usize, time_embed_dim: usize, vb: VarBuilder) -> Result<Self> {
-        let embedder = linear(in_channels, time_embed_dim, vb.pp("timestep_embedder"))?;
-        Ok(Self { embedder })
+        let timestep_embedder = linear(in_channels, time_embed_dim, vb.pp("timestep_embedder"))?;
+        Ok(Self { timestep_embedder })
     }
 }
 
 impl Module for TimestepEmbedding {
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        self.embedder.forward(x)
+        self.timestep_embedder.forward(x)
     }
 }
 

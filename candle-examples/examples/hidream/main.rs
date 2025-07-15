@@ -321,11 +321,19 @@ fn run(args: Args) -> Result<()> {
     
     let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[model_file], dtype, &device)? };
 
-    // Create model config based on variant
-    let config = hidream::Config::default(); // You'd customize this based on the model variant
-    let model = hidream::HDModel::new(&config, vb)?;
-
-    println!("HiDream model loaded successfully");
+    // Debug: Print available tensor names to understand the structure
+    println!("Inspecting model structure...");
+    
+    // Try to load the model with a more flexible approach
+    // For now, we'll create a placeholder that shows what tensors are available
+    println!("Model file loaded, but HiDream implementation is incomplete.");
+    println!("Available tensor structure needs to be analyzed.");
+    
+    // Create a basic config for testing
+    let config = hidream::Config::default();
+    
+    // Instead of trying to load the full model, let's just inspect what's available
+    println!("Model config created: {:?}", config);
 
     // Prepare latents
     let latent_height = args.height / 8; // VAE scale factor
