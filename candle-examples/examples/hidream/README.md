@@ -1,214 +1,132 @@
-# HiDream Image Generation and Editing
+# Reference code
+our code:
+@/candle-examples/examples/hidream/main.rs 
+@/candle-transformers/src/models/hidream/mod.rs 
 
-This example demonstrates how to use the HiDream models for both image generation (I1 variants) and image editing (E1 variant) using the Candle framework.
+our reference:
+@/candle-examples/examples/hidream/reference
+and
+@/candle-transformers/src/models/hidream/reference/model.py
 
-## Models
+# HiDream Implementation TODO List
 
-HiDream supports multiple model variants:
+## Current Issues and Fixes Needed
+# We don have support in candle for F8_E4M3
+The command failed with Error: unsupported safetensor dtype F8_E4M3. This is because the safetensors library in its current version does not support the F8_E4M3 data type used by the model.
 
-### Generation Models (I1)
-- **HiDream-I1-Dev**: Fast generation model (28 steps, guidance_scale=0.0)
-- **HiDream-I1-Full**: High quality generation model (50 steps, guidance_scale=5.0)
-- **HiDream-I1-Fast**: Fastest generation model (16 steps, guidance_scale=0.0)
+### 1. VAE Usage Issues ⚠️
+- ✅ Load Flux VAE from huggingface 
+- ✅ Implement proper encode/decode functions
+- ✅ Add VAE scale_factor and shift_factor usage
+- ❌ **CRITICAL**: VAE is loaded but not used for proper latent space conversion
+- ❌ **CRITICAL**: Input latents are created with `Tensor::randn` instead of VAE encoding
+- ❌ **CRITICAL**: Latent dimensions don't match expected VAE latent space
 
-### Editing Models (E1)
-- **HiDream-E1-Full**: Image editing model (28 steps, guidance_scale=5.0)
+### 2. Model Forward Pass Issues ⚠️
+- ✅ Model forward calls are implemented in generation loop
+- ❌ **CRITICAL**: `forward_with_cfg` method exists but has incomplete implementation
+- ❌ **CRITICAL**: Missing proper weight loading from safetensors into model layers
+- ❌ **CRITICAL**: Model layers are created but weights aren't loaded from the safetensors file
+- ❌ **CRITICAL**: VarBuilder paths don't match actual safetensors structure
 
-## Usage
+### 3. Weight Loading Issues ❌
+- ❌ **CRITICAL**: Safetensors file is loaded but weights aren't mapped to model components
+- ❌ **CRITICAL**: Need to inspect safetensors structure and map to HDModel layers
+- ❌ **CRITICAL**: VarBuilder paths need to match actual weight names in safetensors
+- ❌ **CRITICAL**: Missing proper model instantiation with loaded weights
 
-### Basic Image Generation
+### 4. Text Encoder Issues ❌
+- ❌ **CRITICAL**: LLaMA embeddings are just zero tensors (placeholder)
+- ❌ **CRITICAL**: Need to load actual LLaMA model for proper text encoding
+- ❌ **CRITICAL**: Missing text projection layers implementation
+- ❌ **CRITICAL**: Caption projection layers are empty in HDModel
+- ⚠️ T5 and CLIP encoders work but may need better integration
 
-```bash
-# Generate an image with default settings (I1-Full model)
-cargo run --example hidream --release -- --prompt "A cat holding a sign that says \"Hi-Dreams.ai\""
+### 5. Scheduler Implementation ✅
+- ✅ FlowMatch scheduler implemented
+- ✅ UniPC scheduler support added
+- ✅ Proper timestep calculation implemented
+- ✅ Noise scheduling working
 
-# Use different model variants
-cargo run --example hidream --release -- --model i1-dev --prompt "A beautiful landscape"
-cargo run --example hidream --release -- --model i1-fast --prompt "A robot in space"
+## Detailed Analysis
 
-# Customize generation parameters
-cargo run --example hidream --release -- \
-    --prompt "A futuristic city at sunset" \
-    --height 1024 \
-    --width 1024 \
-    --num-inference-steps 50 \
-    --guidance-scale 7.5 \
-    --seed 42 \
-    --output my_image.jpg
+### Critical Issues Found:
+
+#### A. VAE Integration Problems
+```rust
+// WRONG: Creating random latents instead of using VAE
+let mut latents = Tensor::randn(0f32, 1f32, (1, 64, latent_height, latent_width), &device)?;
+
+// SHOULD BE: Encode noise in VAE latent space or start from VAE-encoded image
 ```
 
-### Image Editing (E1 Model)
+#### B. Model Weight Loading Problems
+```rust
+// CURRENT: VarBuilder is created but weights aren't properly loaded
+let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[model_file], dtype, &device)? };
+let model = hidream::HDModel::new(&config, vb)?; // Weights may not match structure
 
-```bash
-# Edit an existing image
-cargo run --example hidream --release -- \
-    --model e1-full \
-    --prompt "Editing Instruction: Convert the image into a Ghibli style. Target Image Description: A person in a light pink t-shirt with short dark hair, depicted in a Ghibli style against a plain background." \
-    --input-image input.jpg \
-    --guidance-scale 5.0 \
-    --image-guidance-scale 4.0 \
-    --negative-prompt "low resolution, blur" \
-    --output edited_output.jpg
+// NEED: Inspect safetensors structure and map correctly
 ```
 
-## Command Line Arguments
+#### C. Text Encoder Problems
+```rust
+// CURRENT: Placeholder zero tensors
+let llama_emb = Tensor::zeros((1, 128, 4096), dtype, device)?;
 
-- `--prompt`: The text prompt for generation or editing instruction
-- `--model`: Model variant to use (i1-dev, i1-full, i1-fast, e1-full)
-- `--height`: Output image height in pixels (default: 1024)
-- `--width`: Output image width in pixels (default: 1024)
-- `--num-inference-steps`: Number of denoising steps (optional, uses model default)
-- `--guidance-scale`: Classifier-free guidance scale (optional, uses model default)
-- `--image-guidance-scale`: Image guidance scale for editing (default: 4.0)
-- `--input-image`: Input image path for editing (required for E1 model)
-- `--negative-prompt`: Negative prompt (default: "low resolution, blur")
-- `--seed`: Random seed for reproducible results
-- `--output`: Output filename (default: hidream_output.jpg)
-- `--cpu`: Run on CPU instead of GPU
-- `--tracing`: Enable performance tracing
-
-## Model Details
-
-### Text Encoders
-HiDream uses multiple text encoders for rich text understanding:
-- **T5-XXL**: Primary text encoder for detailed text understanding
-- **CLIP**: Two CLIP models for visual-text alignment
-- **LLaMA-3.1-8B**: Advanced language model for instruction following
-
-### Architecture
-- **Transformer-based**: Uses a transformer architecture similar to Flux
-- **Multi-expert**: Employs mixture-of-experts (MoE) for efficient computation
-- **Dual-stream**: Separate processing streams for different modalities
-
-### Resolution Support
-The models support various resolutions:
-- 1024 × 1024 (Square)
-- 768 × 1360 (Portrait)
-- 1360 × 768 (Landscape)
-- 880 × 1168 (Portrait)
-- 1168 × 880 (Landscape)
-- 1248 × 832 (Landscape)
-- 832 × 1248 (Portrait)
-
-## Examples
-
-### Text-to-Image Generation
-
-```bash
-# Simple generation
-cargo run --example hidream --release -- --prompt "A majestic dragon flying over mountains"
-
-# High quality generation with custom parameters
-cargo run --example hidream --release -- \
-    --model i1-full \
-    --prompt "A cyberpunk cityscape with neon lights reflecting on wet streets" \
-    --height 1360 \
-    --width 768 \
-    --guidance-scale 7.5 \
-    --num-inference-steps 50 \
-    --seed 123
+// NEED: Actual LLaMA model loading and inference
 ```
 
-### Image Editing
+#### D. Model Forward Pass Issues
+- `forward_with_cfg` exists but may have implementation gaps
+- Missing proper handling of text projections
+- Positional encoding may not be correctly implemented
 
-```bash
-# Style transfer
-cargo run --example hidream --release -- \
-    --model e1-full \
-    --prompt "Editing Instruction: Convert to anime style. Target Image Description: An anime-style version of the original image with vibrant colors and stylized features." \
-    --input-image photo.jpg \
-    --guidance-scale 5.0 \
-    --image-guidance-scale 4.0
+## Implementation Plan
 
-# Object modification
-cargo run --example hidream --release -- \
-    --model e1-full \
-    --prompt "Editing Instruction: Change the car color to red. Target Image Description: The same scene but with a bright red car instead of the original color." \
-    --input-image car_scene.jpg
-```
+### Phase 1: Fix Weight Loading 🔄 DOING
+- [ ] Inspect safetensors file structure to understand weight naming
+- [ ] Map safetensors weight names to HDModel layer names
+- [ ] Fix VarBuilder paths to match actual weight structure
+- [ ] Verify model layers are properly initialized with weights
+- [ ] Add weight loading validation
 
-## Performance Tips
+### Phase 2: Fix VAE Integration 🔄 DOING  
+- [ ] Replace random latent generation with proper VAE encoding
+- [ ] Implement proper latent space initialization
+- [ ] Fix latent dimensions to match VAE expectations
+- [ ] Add proper VAE scaling and shifting
+- [ ] Test VAE encode/decode pipeline
 
-1. **Use appropriate model variants**: 
-   - Use `i1-fast` for quick previews
-   - Use `i1-full` for high-quality final images
-   - Use `i1-dev` for balanced speed/quality
+### Phase 3: Implement Text Encoders ❌
+- [ ] Load actual LLaMA model for text encoding
+- [ ] Implement caption projection layers properly
+- [ ] Fix text embedding integration in forward pass
+- [ ] Add proper text tokenization and encoding
+- [ ] Integrate all text encoders (T5, CLIP, LLaMA)
 
-2. **Optimize inference steps**:
-   - Fewer steps = faster generation
-   - More steps = higher quality (diminishing returns after model defaults)
+### Phase 4: Fix Model Forward Pass ❌
+- [ ] Debug and fix `forward_with_cfg` implementation
+- [ ] Ensure proper text embedding handling
+- [ ] Fix positional encoding implementation
+- [ ] Add proper attention mask handling
+- [ ] Validate model output shapes
 
-3. **GPU acceleration**: 
-   - The models are optimized for GPU usage
-   - Use `--cpu` only for testing or if GPU is unavailable
+### Phase 5: Integration and Testing ❌
+- [ ] End-to-end pipeline testing
+- [ ] Verify output quality
+- [ ] Performance optimization
+- [ ] Add proper error handling
 
-4. **Memory management**:
-   - Lower resolutions use less memory
-   - Consider using smaller batch sizes for limited VRAM
+## Current Status: DOING
+**Priority 1**: Fix weight loading from safetensors (Phase 1)
+**Priority 2**: Fix VAE integration (Phase 2)
+**Priority 3**: Implement proper text encoders (Phase 3)
 
-## Troubleshooting
+## Next Steps Required:
 
-### Common Issues
-
-1. **Out of memory**: Reduce image resolution or use CPU mode
-2. **Slow generation**: Ensure GPU acceleration is enabled
-3. **Poor quality**: Increase guidance scale or inference steps
-4. **Model loading errors**: Check internet connection for model downloads
-
-### Requirements
-
-- CUDA-capable GPU (recommended)
-- At least 8GB VRAM for full models
-- Internet connection for initial model downloads
-- Rust 1.70+ with Candle dependencies
-
-## Implementation Status
-
-**Note**: This is a work-in-progress implementation. Some features may be incomplete:
-
-- ✅ Complete CLI framework and model variants
-- ✅ Text encoder integration (T5, CLIP)
-- ✅ HiDream transformer implementation with forward pass
-- ✅ Scheduler implementations (FlowMatch, UniPC, FlashFlow)
-- ✅ Dual-stream attention and MoE feed-forward networks
-- ✅ Generation loop framework
-- 🚧 VAE decoder integration needed
-- 🚧 LLaMA text encoder integration needed
-- ❌ LoRA support for E1 editing
-- ❌ Instruction refinement
-
-The current implementation provides a solid foundation with a complete transformer architecture. The main remaining work is VAE integration and LLaMA text encoder support.
-
-## Task Status
-
-### Todo
-- [ ] Implement proper VAE decoder integration
-- [ ] Integrate LLaMA-3.1-8B text encoder
-- [ ] Add LoRA support for E1 editing model
-- [ ] Implement instruction refinement functionality
-- [ ] Add proper error handling and validation
-- [ ] Optimize memory usage for large models
-- [ ] Add quantized model support
-- [ ] Create comprehensive test suite
-
-### Doing
-- [x] Complete generation loop with scheduler integration
-- [x] Update main.rs to use new transformer and schedulers
-
-### Done
-- [x] Project structure setup
-- [x] Basic example framework
-- [x] README documentation
-- [x] Command-line interface design
-- [x] Model variant definitions
-- [x] Asset directory structure
-- [x] Usage examples and scripts
-- [x] Basic CLI interface and argument parsing
-- [x] Model variant configuration (I1-Dev, I1-Full, I1-Fast, E1-Full)
-- [x] Text encoder integration framework (T5, CLIP)
-- [x] HiDream transformer forward implementation
-- [x] Scheduler implementations (FlowMatchEulerDiscreteScheduler, FlowUniPCMultistepScheduler, FlashFlowMatchEulerDiscreteScheduler)
-- [x] HDAttention with dual-stream processing
-- [x] HDBlockDouble and HDBlockSingle implementations
-- [x] Mixture-of-Experts (MoE) feed-forward networks
-- [x] Positional encoding and timestep embeddings
+1. **Inspect safetensors structure**: Use tools to examine the actual weight names and shapes
+2. **Fix VarBuilder paths**: Map the weight names to the correct model components  
+3. **Replace random latents**: Use proper VAE encoding for latent initialization
+4. **Implement LLaMA encoder**: Load and use actual LLaMA model for text encoding
+5. **Test model forward pass**: Ensure the model actually produces meaningful outputs
