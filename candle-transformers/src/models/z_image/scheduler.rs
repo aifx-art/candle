@@ -110,18 +110,16 @@ impl FlowMatchEulerDiscreteScheduler {
         let sigma_max = self.sigmas[0];
         let sigma_min = *self.sigmas.last().unwrap_or(&0.0);
 
-        // Linear interpolation to generate timesteps
-        let timesteps: Vec<f64> = (0..num_inference_steps)
+        let num_train_timesteps = self.config.num_train_timesteps as f64;
+
+        // Linear interpolation from sigma_max to 0.0 inclusive (matching Python diffusers)
+        // Uses i / (num_inference_steps - 1) so the last step reaches 0.0
+        let steps = if num_inference_steps > 1 { num_inference_steps - 1 } else { 1 };
+        let mut sigmas: Vec<f64> = (0..num_inference_steps)
             .map(|i| {
-                let t = i as f64 / num_inference_steps as f64;
+                let t = i as f64 / steps as f64;
                 sigma_max * (1.0 - t) + sigma_min * t
             })
-            .map(|s| s * self.config.num_train_timesteps as f64)
-            .collect();
-
-        let mut sigmas: Vec<f64> = timesteps
-            .iter()
-            .map(|&t| t / self.config.num_train_timesteps as f64)
             .collect();
 
         // Apply shift
@@ -144,9 +142,17 @@ impl FlowMatchEulerDiscreteScheduler {
             let shift = self.config.shift;
             sigmas = sigmas
                 .iter()
-                .map(|&s| shift * s / (1.0 + (shift - 1.0) * s))
+                .map(|&s| {
+                    if s <= 0.0 { 0.0 } else { shift * s / (1.0 + (shift - 1.0) * s) }
+                })
                 .collect();
         }
+
+        // Derive timesteps from the (shifted) sigmas
+        let timesteps: Vec<f64> = sigmas
+            .iter()
+            .map(|&s| s * num_train_timesteps)
+            .collect();
 
         // Add terminal sigma = 0
         sigmas.push(0.0);
